@@ -1,0 +1,15 @@
+[package]
+name = "droid-juicer"
+homepage = "https://gitlab.com/mobian1/droid-juicer"
+description = "Extract firmware from Android vendor partitions"
+authors = [ "Arnaud Ferraris <aferraris@debian.org>" ]
+version = "0.0.1"
+license = "MIT"
+edition = "2021"
+
+[dependencies]
+structopt = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.5"
+goblin = "0.2"
+sys-mount = "1.5"
