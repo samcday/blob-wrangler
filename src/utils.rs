@@ -1,4 +1,4 @@
-use std::{io, io::Write, process::Command};
+use std::{io, io::Write, process::Command, path::PathBuf};
 
 pub fn execute(command: &str, arguments: Option<Vec<&str>>) {
     let mut exe = Command::new(&command);
@@ -16,3 +16,15 @@ pub fn execute(command: &str, arguments: Option<Vec<&str>>) {
         println!("{}: unable to execute command!", command);
     }
 }
+
+pub fn divert(file: &PathBuf) {
+    let orig = format!("{}", file.display());
+    let diverted = format!("{}.juicer", file.display());
+    execute("/usr/bin/dpkg-divert",
+            Some(vec!["--add",
+                      "--rename",
+                      "--package", "droid-juicer",
+                      "--divert", diverted.as_str(),
+                      orig.as_str()]));
+}
+

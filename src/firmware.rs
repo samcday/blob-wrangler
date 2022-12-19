@@ -94,30 +94,21 @@ fn find_file(mntpath: &PathBuf, dir: &str, name: &str) -> String {
     String::from(filepath.to_str().unwrap())
 }
 
-fn squash_file(basedir: &str, basename: &str, outdir: &str) -> Result<(), std::io::Error> {
-    let mut inpath = PathBuf::from(basedir);
-    inpath.push(basename);
-
-    let mut outpath = PathBuf::from(outdir);
-    outpath.push(basename);
-    outpath.set_extension("mbn");
-
+fn squash_file(inpath: &PathBuf, outpath: &PathBuf) -> Result<(), std::io::Error> {
     let buffer = match fs::read(&inpath) {
         Ok(buf) => buf,
-        Err(e) => panic!("Unable to read {:?}: {}", &inpath, e)
+        Err(e) => panic!("Unable to read {}: {}", inpath.display(), e)
     };
 
     let elf = match Elf::parse(buffer.as_slice()) {
         Ok(value) => value,
-        Err(e) => panic!("Unable to parse {}: {}", basename, e)
+        Err(e) => panic!("Unable to parse {}: {}", inpath.display(), e)
     };
 
     let mut count = 0;
     let mut hashoffset = 0;
     
     let mut mdt_fd = fs::File::open(&inpath).unwrap();
-    
-    fs::create_dir_all(outdir)?;
     let mbn_fd = fs::File::create(outpath).unwrap();
 
     for ref phdr in elf.program_headers {
@@ -184,29 +175,23 @@ pub fn process(config: Config) -> Result<(), std::io::Error> {
                         println!("Unable to find {} on partition {}", file, entry.partition);
                         continue;
                     }
+
+                    let mut origpath = PathBuf::from(basedir);
+                    origpath.push(&file);
+
+                    let mut destpath = PathBuf::from(&dest);
+                    fs::create_dir_all(&destpath)?;
+                    destpath.push(&file);
+
                     if entry.divert == Some(true) {
-                        utils::execute(
-                                       "/usr/bin/dpkg-divert",
-                                       Some(
-                                            vec![
-                                                 "--add",
-                                                 "--rename",
-                                                 "--package", "droid-juicer",
-                                                 dest.as_str()
-                                                ]
-                                           )
-                                      );
+                        utils::divert(&destpath);
                     }
+
                     if file.ends_with(".mdt") {
-                        squash_file(basedir.as_str(), file.as_str(), dest.as_str())?;
+                        destpath.set_extension("mbn");
+                        squash_file(&origpath, &destpath)?;
                     } else {
-                        let mut origpath = PathBuf::from(basedir);
-                        origpath.push(&file);
-
-                        let mut destpath = PathBuf::from(&dest);
-                        destpath.push(&file);
-
-                        let _r = fs::copy(origpath, destpath);
+                        let _r = fs::copy(&origpath, &destpath);
                     }
                 }
                 let _res = m.unmount(UnmountFlags::empty());
