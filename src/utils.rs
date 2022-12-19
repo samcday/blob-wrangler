@@ -28,3 +28,11 @@ pub fn divert(file: &PathBuf) {
                       orig.as_str()]));
 }
 
+pub fn undivert(file: &PathBuf) {
+    let orig = format!("{}", file.display());
+    execute("/usr/bin/dpkg-divert",
+            Some(vec!["--remove",
+                      "--rename",
+                      "--package", "droid-juicer",
+                      orig.as_str()]));
+}

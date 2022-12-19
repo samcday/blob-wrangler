@@ -12,6 +12,10 @@ struct Opt {
     /// Device type (default: auto-detect)
     #[clap(short, long)]
     device: Option<String>,
+
+    /// Remove previously extracted files
+    #[clap(short, long)]
+    cleanup: bool,
 }
 
 #[derive(Deserialize, Debug, Default, Clone)]
@@ -61,20 +65,36 @@ fn main() -> Result<(), std::io::Error> {
         },
     };
 
-    let mut cfg_path = PathBuf::from("/usr/share/droid-juicer/configs");
-    cfg_path.push(&device);
-    cfg_path.set_extension("toml");
+    if opt.cleanup {
+        if let Ok(f) = fs::File::open("/var/lib/droid-juicer/status.json") {
+            let status: firmware::Status = serde_json::from_reader(f)?;
 
-    let contents = match fs::read_to_string(cfg_path) {
-        Ok(str) => str,
-        _ => "".to_string(),
-    };
-
-    let config: Config = toml::from_str(contents.as_str()).unwrap();
-    let status = firmware::process(config.juicer)?;
-    fs::create_dir_all("/var/lib/droid-juicer/")?;
-    if let Ok(f) = fs::File::create("/var/lib/droid-juicer/status.json") {
-        serde_json::to_writer_pretty(f, &status)?;
+            for file in status.files {
+                fs::remove_file(file)?;
+            }
+            if let Some(d) = status.diversions {
+                for diversion in d {
+                    utils::undivert(&PathBuf::from(diversion));
+                }
+            }
+            fs::remove_file("/var/lib/droid-juicer/status.json")?;
+        }
+    } else {
+        let mut cfg_path = PathBuf::from("/usr/share/droid-juicer/configs");
+        cfg_path.push(&device);
+        cfg_path.set_extension("toml");
+    
+        let contents = match fs::read_to_string(cfg_path) {
+            Ok(str) => str,
+            _ => "".to_string(),
+        };
+    
+        let config: Config = toml::from_str(contents.as_str()).unwrap();
+        let status = firmware::process(config.juicer)?;
+        fs::create_dir_all("/var/lib/droid-juicer/")?;
+        if let Ok(f) = fs::File::create("/var/lib/droid-juicer/status.json") {
+            serde_json::to_writer_pretty(f, &status)?;
+        }
     }
 
     utils::execute("/usr/sbin/update-initramfs", Some(vec!["-u", "-k", krel.as_str()]));
