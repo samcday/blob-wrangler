@@ -36,7 +36,7 @@ use std::{fs, os::unix::prelude::FileExt, path::PathBuf};
 use std::io::{Read, Seek, SeekFrom};
 use serde::Deserialize;
 use goblin::elf::Elf;
-use sys_mount::*;
+use uname;
 
 use crate::utils;
 
@@ -53,7 +53,7 @@ pub struct FwConfig {
 
 #[derive(Deserialize, Debug, Default, Clone)]
 pub struct Config {
-    entries: Vec<FwConfig>
+    firmware: Vec<FwConfig>
 }
 
 fn mount_part(part: &str, mountpath: &PathBuf) -> Result<Mount, std::io::Error> {
@@ -157,8 +157,16 @@ fn squash_file(basedir: &str, basename: &str, outdir: &str) -> Result<(), std::i
     Ok(())
 }
 
-pub fn process(firmware: Config) -> Result<(), std::io::Error> {
-    for entry in firmware.entries {
+pub fn process(config: Config) -> Result<(), std::io::Error> {
+    let krel = match uname::uname() {
+        Ok(u) => u.release,
+        _ => {
+            println!("Unable to determine running kernel release!");
+            String::from("all")
+        },
+    };
+
+    for entry in config.firmware {
         let mut destpath = PathBuf::from("/lib/firmware");
         destpath.push(entry.destination);
         let dest = format!("{}", destpath.display());
@@ -194,9 +202,8 @@ pub fn process(firmware: Config) -> Result<(), std::io::Error> {
         let _r = fs::remove_dir(mntpath);
     }
 
-    // TODO: execute `uname -r` and use the result instead of "all"
-    utils::execute("/usr/sbin/update-initramfs", Some(vec!["-u", "-k", "all"]));
-    utils::execute("/etc/kernel/postinst.d/zz-qcom-bootimg", Some(vec!["all"]));
+    utils::execute("/usr/sbin/update-initramfs", Some(vec!["-u", "-k", krel.as_str()]));
+    utils::execute("/etc/kernel/postinst.d/zz-qcom-bootimg", Some(vec![krel.as_str()]));
 
     Ok(())
 }
