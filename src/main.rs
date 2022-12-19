@@ -71,7 +71,11 @@ fn main() -> Result<(), std::io::Error> {
     };
 
     let config: Config = toml::from_str(contents.as_str()).unwrap();
-    firmware::process(config.juicer)?;
+    let status = firmware::process(config.juicer)?;
+    fs::create_dir_all("/var/lib/droid-juicer/")?;
+    if let Ok(f) = fs::File::create("/var/lib/droid-juicer/status.json") {
+        serde_json::to_writer_pretty(f, &status)?;
+    }
 
     utils::execute("/usr/sbin/update-initramfs", Some(vec!["-u", "-k", krel.as_str()]));
     utils::execute("/etc/kernel/postinst.d/zz-qcom-bootimg", Some(vec![krel.as_str()]));

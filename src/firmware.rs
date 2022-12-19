@@ -34,7 +34,7 @@
 
 use std::{fs, os::unix::prelude::FileExt, path::PathBuf};
 use std::io::{Read, Seek, SeekFrom};
-use serde::Deserialize;
+use serde::{ Serialize, Deserialize };
 use goblin::elf::Elf;
 use sys_mount::{Mount, Unmount, UnmountFlags};
 
@@ -55,6 +55,12 @@ pub struct FwConfig {
 #[derive(Deserialize, Debug, Default, Clone)]
 pub struct Config {
     firmware: Vec<FwConfig>
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Status {
+    pub files: Vec<String>,
+    pub diversions: Option<Vec<String>>,
 }
 
 fn mount_part(part: &str, mountpath: &PathBuf) -> Result<Mount, std::io::Error> {
@@ -149,7 +155,9 @@ fn squash_file(inpath: &PathBuf, outpath: &PathBuf) -> Result<(), std::io::Error
     Ok(())
 }
 
-pub fn process(config: Config) -> Result<(), std::io::Error> {
+pub fn process(config: Config) -> Result<Status, std::io::Error> {
+    let mut files: Vec<String> = Vec::new();
+    let mut diverts: Vec<String> = Vec::new();
 
     for entry in config.firmware {
         let mut destpath = PathBuf::from("/lib/firmware");
@@ -177,6 +185,7 @@ pub fn process(config: Config) -> Result<(), std::io::Error> {
 
                     if entry.divert == Some(true) {
                         utils::divert(&destpath);
+                        diverts.push(format!("{}", destpath.display()));
                     }
 
                     if file.ends_with(".mdt") {
@@ -185,6 +194,8 @@ pub fn process(config: Config) -> Result<(), std::io::Error> {
                     } else {
                         let _r = fs::copy(&origpath, &destpath);
                     }
+
+                    files.push(format!("{}", destpath.display()));
                 }
                 let _res = m.unmount(UnmountFlags::empty());
             },
@@ -194,5 +205,13 @@ pub fn process(config: Config) -> Result<(), std::io::Error> {
         let _r = fs::remove_dir(mntpath);
     }
 
-    Ok(())
+    let diversions = match diverts.len() {
+        0 => None,
+        _ => Some(diverts),
+    };
+
+    Ok(Status {
+        files,
+        diversions
+    })
 }
