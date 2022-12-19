@@ -36,6 +36,7 @@ use std::{fs, os::unix::prelude::FileExt, path::PathBuf};
 use std::io::{Read, Seek, SeekFrom};
 use serde::Deserialize;
 use goblin::elf::Elf;
+use sys_mount::{Mount, Unmount, UnmountFlags};
 use uname;
 
 use crate::utils;
@@ -49,6 +50,7 @@ pub struct FwConfig {
     origin: String,
     destination: String,
     files: Vec<String>,
+    divert: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Default, Clone)]
@@ -181,6 +183,19 @@ pub fn process(config: Config) -> Result<(), std::io::Error> {
                     if basedir.len() == 0 {
                         println!("Unable to find {} on partition {}", file, entry.partition);
                         continue;
+                    }
+                    if entry.divert == Some(true) {
+                        utils::execute(
+                                       "/usr/bin/dpkg-divert",
+                                       Some(
+                                            vec![
+                                                 "--add",
+                                                 "--rename",
+                                                 "--package", "droid-juicer",
+                                                 dest.as_str()
+                                                ]
+                                           )
+                                      );
                     }
                     if file.ends_with(".mdt") {
                         squash_file(basedir.as_str(), file.as_str(), dest.as_str())?;
