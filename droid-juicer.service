@@ -1,0 +1,13 @@
+[Unit]
+Description=Android vendor firmware extraction
+Wants=sysinit.target
+After=-.mount tmp.mount boot.mount
+ConditionFirstBoot=yes
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/droid-juicer
+ExecStartPost=/usr/sbin/reboot
+
+[Install]
+WantedBy=basic.target
