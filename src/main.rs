@@ -15,7 +15,7 @@ struct Opt {
 
 #[derive(Deserialize, Debug, Default, Clone)]
 struct Config {
-    firmware: Option<firmware::Config>,
+    juicer: firmware::Config,
 }
 
 fn detect_device() -> Option<String> {
@@ -62,10 +62,7 @@ fn main() -> Result<(), std::io::Error> {
     };
 
     let config: Config = toml::from_str(contents.as_str()).unwrap();
-
-    if let Some(firmware) = config.firmware {
-        firmware::process(firmware)?;
-    }
+    firmware::process(config.juicer)?;
 
     Ok(())
 }
