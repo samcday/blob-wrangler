@@ -2,14 +2,14 @@ mod firmware;
 mod utils;
 
 use std::{ path::PathBuf, fs };
-use structopt::StructOpt;
+use clap::Parser;
 use serde::Deserialize;
 
-#[derive(Debug, StructOpt)]
-#[structopt(about = "Extract firmware from Android vendor partitions")]
+#[derive(Parser)]
+#[clap(about = "Extract firmware from Android vendor partitions")]
 struct Opt {
     /// Device type (default: auto-detect)
-    #[structopt(short, long)]
+    #[clap(short, long)]
     device: Option<String>,
 }
 
@@ -45,7 +45,7 @@ fn detect_device() -> Option<String> {
 }
 
 fn main() -> Result<(), std::io::Error> {
-    let opt = Opt::from_args();
+    let opt = Opt::parse();
 
     let device = match opt.device {
         Some(str) => str,
