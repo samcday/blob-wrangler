@@ -37,7 +37,6 @@ use std::io::{Read, Seek, SeekFrom};
 use serde::Deserialize;
 use goblin::elf::Elf;
 use sys_mount::{Mount, Unmount, UnmountFlags};
-use uname;
 
 use crate::utils;
 
@@ -151,13 +150,6 @@ fn squash_file(inpath: &PathBuf, outpath: &PathBuf) -> Result<(), std::io::Error
 }
 
 pub fn process(config: Config) -> Result<(), std::io::Error> {
-    let krel = match uname::uname() {
-        Ok(u) => u.release,
-        _ => {
-            println!("Unable to determine running kernel release!");
-            String::from("all")
-        },
-    };
 
     for entry in config.firmware {
         let mut destpath = PathBuf::from("/lib/firmware");
@@ -201,9 +193,6 @@ pub fn process(config: Config) -> Result<(), std::io::Error> {
 
         let _r = fs::remove_dir(mntpath);
     }
-
-    utils::execute("/usr/sbin/update-initramfs", Some(vec!["-u", "-k", krel.as_str()]));
-    utils::execute("/etc/kernel/postinst.d/zz-qcom-bootimg", Some(vec![krel.as_str()]));
 
     Ok(())
 }

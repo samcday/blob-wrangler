@@ -4,6 +4,7 @@ mod utils;
 use std::{ path::PathBuf, fs };
 use clap::Parser;
 use serde::Deserialize;
+use uname;
 
 #[derive(Parser)]
 #[clap(about = "Extract firmware from Android vendor partitions")]
@@ -52,6 +53,14 @@ fn main() -> Result<(), std::io::Error> {
         _ => detect_device().unwrap(),
     };
 
+    let krel = match uname::uname() {
+        Ok(u) => u.release,
+        _ => {
+            println!("Unable to determine running kernel release!");
+            String::from("all")
+        },
+    };
+
     let mut cfg_path = PathBuf::from("/usr/share/droid-juicer/configs");
     cfg_path.push(&device);
     cfg_path.set_extension("toml");
@@ -63,6 +72,9 @@ fn main() -> Result<(), std::io::Error> {
 
     let config: Config = toml::from_str(contents.as_str()).unwrap();
     firmware::process(config.juicer)?;
+
+    utils::execute("/usr/sbin/update-initramfs", Some(vec!["-u", "-k", krel.as_str()]));
+    utils::execute("/etc/kernel/postinst.d/zz-qcom-bootimg", Some(vec![krel.as_str()]));
 
     Ok(())
 }
