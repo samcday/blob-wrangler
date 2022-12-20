@@ -32,10 +32,11 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-use std::{fs, os::unix::prelude::FileExt, path::PathBuf};
-use std::io::{Read, Seek, SeekFrom};
-use serde::{ Serialize, Deserialize };
+use std::{ fs, os::unix::prelude::FileExt, path::PathBuf };
+use std::io::{ Error, ErrorKind, Read, Seek, SeekFrom };
+
 use goblin::elf::Elf;
+use serde::{ Serialize, Deserialize };
 use sys_mount::{Mount, Unmount, UnmountFlags};
 
 use crate::utils;
@@ -43,7 +44,7 @@ use crate::utils;
 const FLAGS_READ_MASK: u32 = 0x07000000;
 const FLAGS_MDT_VALUE: u32 = 0x02000000;
 
-#[derive(Deserialize, Debug, Default, Clone)]
+#[derive(Deserialize)]
 pub struct FwConfig {
     partition: String,
     origin: String,
@@ -52,7 +53,7 @@ pub struct FwConfig {
     divert: Option<bool>,
 }
 
-#[derive(Deserialize, Debug, Default, Clone)]
+#[derive(Deserialize)]
 pub struct Config {
     firmware: Vec<FwConfig>
 }
@@ -63,7 +64,7 @@ pub struct Status {
     pub diversions: Option<Vec<String>>,
 }
 
-fn mount_part(part: &str, mountpath: &PathBuf) -> Result<Mount, std::io::Error> {
+fn mount_part(part: &str, mountpath: &PathBuf) -> Result<Mount, Error> {
     let _res = fs::DirBuilder::new().recursive(true).create(mountpath);
 
     let mut srcpath = PathBuf::from("/dev/disk/by-partlabel");
@@ -75,39 +76,37 @@ fn mount_part(part: &str, mountpath: &PathBuf) -> Result<Mount, std::io::Error> 
     match Mount::builder().mount(&srcpath, mountpath) {
         Ok(m) => Ok(m),
         Err(e) => {
-            println!("Unable to mount {} on {}: {}", srcpath.display(), mountpath.display(), e);
-            srcpath.set_file_name(format!("{}_b", part));
-            println!("Mounting {} on {}", srcpath.display(), mountpath.display());
-            match Mount::builder().mount(&srcpath, mountpath) {
-                Ok(m) => Ok(m),
-                Err(e) => Err(e),
+            if srcpath.ends_with("_a") {
+                eprintln!("Unable to mount {} on {}: {}",
+                          srcpath.display(), mountpath.display(), e);
+                srcpath.set_file_name(format!("{}_b", part));
+                println!("Mounting {} on {}", srcpath.display(), mountpath.display());
+                match Mount::builder().mount(&srcpath, mountpath) {
+                    Ok(m) => Ok(m),
+                    Err(e) => Err(e),
+                }
+            } else {
+                Err(e)
             }
         }
     }
 }
 
-fn find_file(mntpath: &PathBuf, dir: &str, name: &str) -> String {
-    let mut filepath = PathBuf::from(&mntpath);
-    filepath.push(dir);
-    filepath.push(name);
-    if !filepath.exists() {
-        println!("File {} not found!", filepath.display());
-        return String::new();
-    }
-    
-    filepath.pop();
-    String::from(filepath.to_str().unwrap())
-}
-
-fn squash_file(inpath: &PathBuf, outpath: &PathBuf) -> Result<(), std::io::Error> {
+fn squash_file(inpath: &PathBuf, outpath: &PathBuf) -> Result<(), Error> {
     let buffer = match fs::read(&inpath) {
         Ok(buf) => buf,
-        Err(e) => panic!("Unable to read {}: {}", inpath.display(), e)
+        Err(e) => {
+            eprintln!("Unable to read {}: {}", inpath.display(), e);
+            return Err(e);
+        }
     };
 
     let elf = match Elf::parse(buffer.as_slice()) {
         Ok(value) => value,
-        Err(e) => panic!("Unable to parse {}: {}", inpath.display(), e)
+        Err(e) => {
+            eprintln!("Unable to parse {}: {}", inpath.display(), e);
+            return Err(Error::new(ErrorKind::InvalidData, e));
+        }
     };
 
     let mut count = 0;
@@ -146,7 +145,8 @@ fn squash_file(inpath: &PathBuf, outpath: &PathBuf) -> Result<(), std::io::Error
         }
 
         if buffer.len() != phdr.p_filesz as usize {
-            panic!("Read {} bytes (!= {}", buffer.len(), phdr.p_filesz);
+            let err_str = format!("Read {} bytes (!= {})", buffer.len(), phdr.p_filesz);
+            return Err(Error::new(ErrorKind::UnexpectedEof, err_str));
         }
 
         mbn_fd.write_at(buffer.as_slice(), phdr.p_offset).unwrap();
@@ -155,14 +155,19 @@ fn squash_file(inpath: &PathBuf, outpath: &PathBuf) -> Result<(), std::io::Error
     Ok(())
 }
 
-pub fn process(config: Config) -> Result<Status, std::io::Error> {
+pub fn process(config: Config) -> Result<Status, Error> {
     let mut files: Vec<String> = Vec::new();
     let mut diverts: Vec<String> = Vec::new();
 
     for entry in config.firmware {
         let mut destpath = PathBuf::from("/lib/firmware");
         destpath.push(entry.destination);
-        let dest = format!("{}", destpath.display());
+
+        if let Err(e) = fs::create_dir_all(&destpath) {
+            eprintln!("Warning: unable to create folder {}: {}",
+                      destpath.display(), e);
+            continue;
+        }
 
         let mut mntpath = PathBuf::from("/tmp");
         mntpath.push(entry.partition.as_str());
@@ -170,32 +175,43 @@ pub fn process(config: Config) -> Result<Status, std::io::Error> {
         match mount_part(entry.partition.as_str(), &mntpath) {
             Ok(m) => {
                 for file in entry.files {
-                    let basedir = find_file(&mntpath, entry.origin.as_str(), file.as_str());
-                    if basedir.len() == 0 {
-                        println!("Unable to find {} on partition {}", file, entry.partition);
+                    let mut origin = PathBuf::from(&mntpath);
+                    origin.push(&entry.origin);
+                    origin.push(&file);
+                    if !origin.exists() {
+                        eprintln!("Warning: unable to find {} on partition {}",
+                                  file, entry.partition);
                         continue;
                     }
 
-                    let mut origpath = PathBuf::from(basedir);
-                    origpath.push(&file);
-
-                    let mut destpath = PathBuf::from(&dest);
-                    fs::create_dir_all(&destpath)?;
-                    destpath.push(&file);
+                    let mut destination = PathBuf::from(&destpath);
+                    destination.push(&file);
 
                     if entry.divert == Some(true) {
-                        utils::divert(&destpath);
-                        diverts.push(format!("{}", destpath.display()));
+                        if let Err(e) = utils::divert(&destination){
+                            eprintln!("Warning: unable to create diversion for {}: {}",
+                                      destination.display(), e);
+                        } else {
+                            diverts.push(format!("{}", destination.display()));
+                        }
                     }
 
                     if file.ends_with(".mdt") {
-                        destpath.set_extension("mbn");
-                        squash_file(&origpath, &destpath)?;
+                        destination.set_extension("mbn");
+                        if let Err(e) = squash_file(&origin, &destination) {
+                            eprintln!("Warning: unable to squash {} to {}: {}",
+                                      origin.display(), destination.display(), e);
+                            continue;
+                        }
                     } else {
-                        let _r = fs::copy(&origpath, &destpath);
+                        if let Err(e) = fs::copy(&origin, &destination) {
+                            eprintln!("Warning: unable to copy {} to {}: {}",
+                                      origin.display(), destination.display(), e);
+                            continue;
+                        }
                     }
 
-                    files.push(format!("{}", destpath.display()));
+                    files.push(format!("{}", destination.display()));
                 }
                 let _res = m.unmount(UnmountFlags::empty());
             },

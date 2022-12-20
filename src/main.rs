@@ -1,10 +1,15 @@
 mod firmware;
 mod utils;
 
-use std::{ path::PathBuf, fs };
+use std::{ fs, path::PathBuf };
+use std::io::{ Error, ErrorKind};
+
 use clap::Parser;
 use serde::Deserialize;
 use uname;
+
+const STATUS_FILE_PATH: &str = "/var/lib/droid-juicer/status.json";
+const CONFIG_DIR_PATH: &str = "/usr/share/droid-juicer/configs";
 
 #[derive(Parser)]
 #[clap(about = "Extract firmware from Android vendor partitions")]
@@ -18,12 +23,12 @@ struct Opt {
     cleanup: bool,
 }
 
-#[derive(Deserialize, Debug, Default, Clone)]
+#[derive(Deserialize)]
 struct Config {
     juicer: firmware::Config,
 }
 
-fn detect_device() -> Option<String> {
+fn detect_device() -> Result<String, Error> {
     let contents = match fs::read_to_string("/proc/device-tree/compatible") {
         Ok(str) => str,
         _ => Default::default(),
@@ -31,7 +36,7 @@ fn detect_device() -> Option<String> {
 
     let compatibles: Vec<&str> = contents.split("\0").filter(|s| s.len() > 0).collect();
 
-    for entry in fs::read_dir("/usr/share/droid-juicer/configs") {
+    for entry in fs::read_dir(CONFIG_DIR_PATH) {
         for file in entry {
             let fname = match file {
                 Ok(dirent) => dirent.file_name(),
@@ -40,65 +45,95 @@ fn detect_device() -> Option<String> {
             for value in compatibles.clone() {
                 let full_name = String::from(value) + ".toml";
                 if &fname == full_name.as_str() {
-                    return Some(value.to_string());
+                    return Ok(value.to_string());
                 }
             }
         }
     }
 
-    None
+    Err(Error::new(ErrorKind::NotFound, "Unable to detect device!"))
 }
 
-fn main() -> Result<(), std::io::Error> {
+fn main() -> Result<(), Error> {
     let opt = Opt::parse();
 
     let device = match opt.device {
         Some(str) => str,
-        _ => detect_device().unwrap(),
+        _ => match detect_device() {
+            Ok(s) => s,
+            Err(e) => return Err(e)
+        },
     };
 
     let krel = match uname::uname() {
         Ok(u) => u.release,
         _ => {
-            println!("Unable to determine running kernel release!");
+            eprintln!("Warning: unable to detect running kernel release!");
             String::from("all")
         },
     };
 
     if opt.cleanup {
-        if let Ok(f) = fs::File::open("/var/lib/droid-juicer/status.json") {
-            let status: firmware::Status = serde_json::from_reader(f)?;
+        println!("Cleaning up files for device {}", device);
+
+        if let Ok(f) = fs::File::open(STATUS_FILE_PATH) {
+            let status: firmware::Status = match serde_json::from_reader(f) {
+                Ok(s) => s,
+                Err(e) => return Err(Error::new(ErrorKind::Other, e))
+            };
 
             for file in status.files {
-                fs::remove_file(file)?;
+                if let Err(e) = fs::remove_file(&file) {
+                    eprintln!("Warning: unable to remove {}: {}", file, e);
+                }
             }
             if let Some(d) = status.diversions {
                 for diversion in d {
-                    utils::undivert(&PathBuf::from(diversion));
+                    if let Err(e) = utils::undivert(&PathBuf::from(&diversion)) {
+                        eprintln!("Warning: unable to remove diversion for {}: {}",
+                                  diversion, e);
+                    }
                 }
             }
-            fs::remove_file("/var/lib/droid-juicer/status.json")?;
+            if let Err(e) = fs::remove_file(STATUS_FILE_PATH) {
+                eprintln!("Warning: unable to remove {}: {}", STATUS_FILE_PATH, e);
+            }
         }
     } else {
-        let mut cfg_path = PathBuf::from("/usr/share/droid-juicer/configs");
+        println!("Starting processing for device {}", device);
+
+        let mut cfg_path = PathBuf::from(CONFIG_DIR_PATH);
         cfg_path.push(&device);
         cfg_path.set_extension("toml");
-    
+
         let contents = match fs::read_to_string(cfg_path) {
             Ok(str) => str,
             _ => "".to_string(),
         };
-    
+
         let config: Config = toml::from_str(contents.as_str()).unwrap();
-        let status = firmware::process(config.juicer)?;
-        fs::create_dir_all("/var/lib/droid-juicer/")?;
-        if let Ok(f) = fs::File::create("/var/lib/droid-juicer/status.json") {
-            serde_json::to_writer_pretty(f, &status)?;
+        let status = match firmware::process(config.juicer) {
+            Ok(s) => s,
+            Err(e) => return Err(e)
+        };
+        if let Err(e) = fs::create_dir_all("/var/lib/droid-juicer/") {
+            return Err(e);
+        }
+        if let Ok(f) = fs::File::create(STATUS_FILE_PATH) {
+            if let Err(e) = serde_json::to_writer_pretty(f, &status) {
+                return Err(Error::new(ErrorKind::Other, e));
+            }
         }
     }
 
-    utils::execute("/usr/sbin/update-initramfs", Some(vec!["-u", "-k", krel.as_str()]));
-    utils::execute("/etc/kernel/postinst.d/zz-qcom-bootimg", Some(vec![krel.as_str()]));
+    if let Err(e) = utils::execute("/usr/sbin/update-initramfs",
+                                   Some(vec!["-u", "-k", krel.as_str()])) {
+        return Err(e);
+    }
+    if let Err(e) = utils::execute("/etc/kernel/postinst.d/zz-qcom-bootimg",
+                                   Some(vec![krel.as_str()])) {
+        return Err(e);
+    }
 
     Ok(())
 }

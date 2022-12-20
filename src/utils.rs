@@ -1,6 +1,7 @@
-use std::{io, io::Write, process::Command, path::PathBuf};
+use std::{ process::Command, path::PathBuf };
+use std::io::{ Error, ErrorKind, Write };
 
-pub fn execute(command: &str, arguments: Option<Vec<&str>>) {
+pub fn execute(command: &str, arguments: Option<Vec<&str>>) -> Result<(), Error> {
     let mut exe = Command::new(&command);
 
     if let Some(args) = arguments {
@@ -9,30 +10,41 @@ pub fn execute(command: &str, arguments: Option<Vec<&str>>) {
 
     let res = exe.output();
     if let Ok(out) = res {
-        println!("{}: command status: {}", command, out.status);
-        io::stdout().write_all(&out.stdout).unwrap();
-        io::stderr().write_all(&out.stderr).unwrap();
+        std::io::stdout().write_all(&out.stdout).unwrap();
+        if out.status.success() {
+            Ok(())
+        } else {
+            std::io::stderr().write_all(&out.stderr).unwrap();
+            let err_str = format!("{} returned with exit code {}", command, out.status);
+            Err(Error::new(ErrorKind::Other, err_str))
+        }
     } else {
-        println!("{}: unable to execute command!", command);
+        let err_str = format!("{}: unable to execute command!", command);
+        Err(Error::new(ErrorKind::Other, err_str))
     }
 }
 
-pub fn divert(file: &PathBuf) {
+fn execute_divert(file: &PathBuf, divert: bool) -> Result<(), Error> {
     let orig = format!("{}", file.display());
     let diverted = format!("{}.juicer", file.display());
-    execute("/usr/bin/dpkg-divert",
-            Some(vec!["--add",
-                      "--rename",
-                      "--package", "droid-juicer",
-                      "--divert", diverted.as_str(),
-                      orig.as_str()]));
+    let mut args = vec!["--package", "droid-juicer", "--rename"];
+
+    if divert {
+        args.push("--add");
+        args.push("--divert");
+        args.push(&diverted);
+    } else {
+        args.push("--remove");
+    }
+    args.push(&orig);
+
+    execute("/usr/bin/dpkg-divert", Some(args))
 }
 
-pub fn undivert(file: &PathBuf) {
-    let orig = format!("{}", file.display());
-    execute("/usr/bin/dpkg-divert",
-            Some(vec!["--remove",
-                      "--rename",
-                      "--package", "droid-juicer",
-                      orig.as_str()]));
+pub fn divert(file: &PathBuf) -> Result<(), Error> {
+    execute_divert(file, true)
+}
+
+pub fn undivert(file: &PathBuf) -> Result<(), Error> {
+    execute_divert(file, false)
 }
