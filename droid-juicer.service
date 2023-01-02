@@ -2,7 +2,7 @@
 Description=Android vendor firmware extraction
 Wants=sysinit.target
 After=-.mount tmp.mount boot.mount
-ConditionFirstBoot=yes
+ConditionPathExists=!/var/lib/droid-juicer/status.json
 
 [Service]
 Type=oneshot
