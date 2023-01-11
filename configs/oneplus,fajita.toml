@@ -4,6 +4,9 @@ firmware = [
             "a630_zap.mdt",
             "ipa_fws.mdt",
         ] },
+    { partition = "vendor", origin = "etc/firmware", destination = "", files = [
+            "tfa98xx.cnt",
+        ] },
     { partition = "modem", origin = "image", destination = "qcom/sdm845/oneplus6", files = [
             "adsp.mdt",
             "adspr.jsn",
