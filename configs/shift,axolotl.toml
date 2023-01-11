@@ -1,13 +1,10 @@
 [juicer]
 firmware = [
-    { partition = "vendor", origin = "firmware", destination = "qcom/sdm845/beryllium", files = [
+    { partition = "vendor", origin = "firmware", destination = "qcom/sdm845/axolotl", files = [
             "a630_zap.mdt",
             "ipa_fws.mdt",
         ] },
-    { partition = "vendor", origin = "firmware", destination = "", files = [
-            "tas2559_uCDSP.bin",
-        ] },
-    { partition = "modem", origin = "image", destination = "qcom/sdm845/beryllium", files = [
+    { partition = "modem", origin = "image", destination = "qcom/sdm845/axolotl", files = [
             "adsp.mdt",
             "adspr.jsn",
             "adspua.jsn",
@@ -23,7 +20,7 @@ firmware = [
             "venus.mdt",
             "wlanmdsp.mbn",
         ] },
-    { partition = "bluetooth", origin = "image", destination = "qca/beryllium", files = [
+    { partition = "bluetooth", origin = "image", destination = "qca/axolotl", files = [
             "crnv21.bin",
         ] },
     { partition = "bluetooth", origin = "image", destination = "qca", divert = true, files = [
