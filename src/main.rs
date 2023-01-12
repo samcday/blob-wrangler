@@ -12,14 +12,14 @@ const STATUS_FILE_PATH: &str = "/var/lib/droid-juicer/status.json";
 const CONFIG_DIR_PATH: &str = "/usr/share/droid-juicer/configs";
 
 #[derive(Parser)]
-#[clap(about = "Extract firmware from Android vendor partitions")]
+#[command(about = "Extract firmware from Android vendor partitions")]
 struct Opt {
     /// Device type (default: auto-detect)
-    #[clap(short, long)]
+    #[arg(short, long)]
     device: Option<String>,
 
     /// Remove previously extracted files
-    #[clap(short, long)]
+    #[arg(short, long)]
     cleanup: bool,
 }
 
