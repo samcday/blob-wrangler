@@ -1,0 +1,30 @@
+[juicer]
+firmware = [
+    { partition = "vendor", origin = "firmware", destination = "qcom/sdm845/pixel3", files = [
+            "a630_zap.mdt",
+            "adsp.mdt",
+            "adspr.jsn",
+            "adspua.jsn",
+            "cdsp.mdt",
+            "cdspr.jsn",
+            "ipa_fws.mdt",
+            "modemuw.jsn",
+            "slpi.mdt",
+            "venus.mdt",
+            "wlanmdsp.mbn",
+        ] },
+    { partition = "vendor", origin = "firmware", destination = "qca/pixel3", files = [
+            "crnv21.bin",
+        ] },
+    { partition = "vendor", origin = "firmware", destination = "qca", divert = true, files = [
+            "crbtfw21.tlv",
+        ] },
+    { partition = "vendor", origin = "firmware", destination = "", files = [
+            "ftm5_fw.ftb",
+        ] },
+    { partition = "modem", origin = "image", destination = "qcom/sdm845/pixel3", files = [
+            "mba.mbn",
+            "modem.mdt",
+            "modemr.jsn",
+        ] },
+]
