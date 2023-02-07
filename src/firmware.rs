@@ -76,8 +76,15 @@ fn mount_part(part: &str, mountpath: &PathBuf) -> Result<Mount, Error> {
     let _res = fs::DirBuilder::new().recursive(true).create(mountpath);
     let flags = MountFlags::RDONLY;
 
-    let mut srcpath = PathBuf::from("/dev/disk/by-partlabel");
+    let mut srcpath = PathBuf::from("/dev/mapper");
     srcpath.push(part);
+    if !srcpath.exists() {
+        srcpath.set_file_name(format!("{}_a", part));
+    }
+    if !srcpath.exists() {
+        srcpath = PathBuf::from("/dev/disk/by-partlabel");
+        srcpath.push(part);
+    }
     if !srcpath.exists() {
         srcpath.set_file_name(format!("{}_a", part));
     }
