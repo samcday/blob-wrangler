@@ -10,6 +10,7 @@ use uname;
 
 const STATUS_FILE_PATH: &str = "/var/lib/droid-juicer/status.json";
 const CONFIG_DIR_PATH: &str = "/usr/share/droid-juicer/configs";
+const CONFIG_FILE_PATH: &str = "/etc/droid-juicer/config.toml";
 
 #[derive(Parser)]
 #[command(about = "Extract firmware from Android vendor partitions")]
@@ -26,6 +27,16 @@ struct Opt {
 #[derive(Deserialize)]
 struct Config {
     juicer: firmware::Config,
+}
+
+#[derive(Deserialize, Default)]
+struct PostProcessConfig {
+    commands: Vec<String>,
+}
+
+#[derive(Deserialize, Default)]
+struct MainConfig {
+    postprocess: PostProcessConfig,
 }
 
 fn detect_device() -> Result<String, Error> {
@@ -56,6 +67,7 @@ fn detect_device() -> Result<String, Error> {
 
 fn main() -> Result<(), Error> {
     let opt = Opt::parse();
+    let mut main_config = MainConfig::default();
 
     let device = match opt.device {
         Some(str) => str,
@@ -72,6 +84,13 @@ fn main() -> Result<(), Error> {
             String::from("all")
         },
     };
+
+    if PathBuf::from(CONFIG_FILE_PATH).exists() {
+        match fs::read_to_string(CONFIG_FILE_PATH) {
+            Ok(contents) => main_config = toml::from_str(contents.as_str()).unwrap(),
+            _ => (),
+        }
+    }
 
     if opt.cleanup {
         println!("Cleaning up files for device {}", device);
@@ -135,13 +154,20 @@ fn main() -> Result<(), Error> {
         }
     }
 
-    if let Err(e) = utils::execute("/usr/sbin/update-initramfs",
-                                   Some(vec!["-u", "-k", krel.as_str()])) {
-        return Err(e);
-    }
-    if let Err(e) = utils::execute("/etc/kernel/postinst.d/zz-qcom-bootimg",
-                                   Some(vec![krel.as_str()])) {
-        return Err(e);
+    for cmdline in main_config.postprocess.commands {
+        let full_cmd = cmdline.replace("%k", krel.as_str());
+        let mut cmd = full_cmd.split(" ").collect::<Vec<_>>();
+        if cmd.is_empty() {
+            continue;
+        }
+        let args_list = cmd.split_off(1);
+        let args = match args_list.is_empty() {
+            true => None,
+            _ => Some(args_list),
+        };
+        if let Err(e) = utils::execute(cmd[0], args) {
+            return Err(e);
+        }
     }
 
     Ok(())
