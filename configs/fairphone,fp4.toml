@@ -1,0 +1,28 @@
+[juicer]
+firmware = [
+    { partition = "vendor", origin = "firmware", destination = "qcom", files = [
+            { name = "a619_gmu.bin" },
+            { name = "a630_sqe.fw" },
+        ] },
+    { partition = "vendor", origin = "firmware", destination = "qcom/sm7225/fairphone4", files = [
+            { name = "a615_zap.mdt" },
+            { name = "lagoon_ipa_fws.mdt", rename = "ipa_fws.mdt" },
+        ] },
+    { partition = "modem", origin = "image", destination = "qcom/sm7225/fairphone4", files = [
+            { name = "adsp.mdt" },
+            { name = "adspr.jsn" },
+            { name = "adsps.jsn" },
+            { name = "adspua.jsn" },
+            { name = "cdsp.mdt" },
+            { name = "cdspr.jsn" },
+            { name = "modem.mdt" },
+            { name = "modemr.jsn" },
+            { name = "modemuw.jsn" },
+            { name = "venus.mdt" },
+            { name = "wlanmdsp.mbn" },
+        ] },
+    { partition = "bluetooth", origin = "image", destination = "qca", files = [
+            { name = "crnv21.bin" },
+            { name = "crbtfw21.tlv" },
+        ] },
+]
