@@ -37,7 +37,7 @@ use std::io::{ Error, ErrorKind, Read, Seek, SeekFrom };
 
 use goblin::elf::Elf;
 use serde::{ Serialize, Deserialize };
-use sys_mount::{Mount, Unmount, UnmountFlags};
+use sys_mount::{Mount, MountFlags, Unmount, UnmountFlags};
 
 const FLAGS_READ_MASK: u32 = 0x07000000;
 const FLAGS_MDT_VALUE: u32 = 0x02000000;
@@ -68,6 +68,7 @@ pub struct OldStatus {
 
 fn mount_part(part: &str, mountpath: &PathBuf) -> Result<Mount, Error> {
     let _res = fs::DirBuilder::new().recursive(true).create(mountpath);
+    let flags = MountFlags::RDONLY;
 
     let mut srcpath = PathBuf::from("/dev/disk/by-partlabel");
     srcpath.push(part);
@@ -75,7 +76,7 @@ fn mount_part(part: &str, mountpath: &PathBuf) -> Result<Mount, Error> {
         srcpath.set_file_name(format!("{}_a", part));
     }
 
-    match Mount::builder().mount(&srcpath, mountpath) {
+    match Mount::builder().flags(flags).mount(&srcpath, mountpath) {
         Ok(m) => Ok(m),
         Err(e) => {
             if srcpath.ends_with("_a") {
@@ -83,10 +84,7 @@ fn mount_part(part: &str, mountpath: &PathBuf) -> Result<Mount, Error> {
                           srcpath.display(), mountpath.display(), e);
                 srcpath.set_file_name(format!("{}_b", part));
                 println!("Mounting {} on {}", srcpath.display(), mountpath.display());
-                match Mount::builder().mount(&srcpath, mountpath) {
-                    Ok(m) => Ok(m),
-                    Err(e) => Err(e),
-                }
+                Mount::builder().flags(flags).mount(&srcpath, mountpath)
             } else {
                 Err(e)
             }
