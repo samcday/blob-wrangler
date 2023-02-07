@@ -23,7 +23,7 @@ firmware = [
     { partition = "bluetooth", origin = "image", destination = "qca/axolotl", files = [
             "crnv21.bin",
         ] },
-    { partition = "bluetooth", origin = "image", destination = "qca", divert = true, files = [
+    { partition = "bluetooth", origin = "image", destination = "qca", files = [
             "crbtfw21.tlv",
         ] },
 ]

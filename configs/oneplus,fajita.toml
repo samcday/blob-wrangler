@@ -26,7 +26,7 @@ firmware = [
     { partition = "bluetooth", origin = "image", destination = "qca/oneplus6", files = [
             "crnv21.bin",
         ] },
-    { partition = "bluetooth", origin = "image", destination = "qca", divert = true, files = [
+    { partition = "bluetooth", origin = "image", destination = "qca", files = [
             "crbtfw21.tlv",
         ] },
 ]

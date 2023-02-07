@@ -16,7 +16,7 @@ firmware = [
     { partition = "vendor", origin = "firmware", destination = "qca/pixel3", files = [
             "crnv21.bin",
         ] },
-    { partition = "vendor", origin = "firmware", destination = "qca", divert = true, files = [
+    { partition = "vendor", origin = "firmware", destination = "qca", files = [
             "crbtfw21.tlv",
         ] },
     { partition = "vendor", origin = "firmware", destination = "", files = [

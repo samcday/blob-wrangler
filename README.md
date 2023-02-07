@@ -25,12 +25,6 @@ The config files contain a single section named `juicer` with a single
   files must be copied; this folder will be created if it doesn't exist
 * `files`: an array of filenames; those are the firmware files to be
   copied by `droid-juicer`
-* `divert` (optional): a boolean indicating whether `droid-juicer`
-  should create a "diversion" (using `dpkg-divert`) for this file; this
-  ensures other packages can't overwrite the extracted firmware and is
-  recommended for firmware files with "generic" names (i.e. none of the
-  file itself and the directory tree containing it include the device's
-  name)
 
 Example configurations can be found in the [configs](configs) folder.
 

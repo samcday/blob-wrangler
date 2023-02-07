@@ -39,8 +39,6 @@ use goblin::elf::Elf;
 use serde::{ Serialize, Deserialize };
 use sys_mount::{Mount, Unmount, UnmountFlags};
 
-use crate::utils;
-
 const FLAGS_READ_MASK: u32 = 0x07000000;
 const FLAGS_MDT_VALUE: u32 = 0x02000000;
 
@@ -50,7 +48,6 @@ pub struct FwConfig {
     origin: String,
     destination: String,
     files: Vec<String>,
-    divert: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -60,6 +57,11 @@ pub struct Config {
 
 #[derive(Serialize, Deserialize)]
 pub struct Status {
+    pub files: Vec<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct OldStatus {
     pub files: Vec<String>,
     pub diversions: Option<Vec<String>>,
 }
@@ -157,10 +159,9 @@ fn squash_file(inpath: &PathBuf, outpath: &PathBuf) -> Result<(), Error> {
 
 pub fn process(config: Config) -> Result<Status, Error> {
     let mut files: Vec<String> = Vec::new();
-    let mut diverts: Vec<String> = Vec::new();
 
     for entry in config.firmware {
-        let mut destpath = PathBuf::from("/lib/firmware");
+        let mut destpath = PathBuf::from("/lib/firmware/updates");
         destpath.push(entry.destination);
 
         if let Err(e) = fs::create_dir_all(&destpath) {
@@ -187,14 +188,6 @@ pub fn process(config: Config) -> Result<Status, Error> {
                     let mut destination = PathBuf::from(&destpath);
                     destination.push(&file);
 
-                    if entry.divert == Some(true) {
-                        if let Err(e) = utils::divert(&destination){
-                            eprintln!("Warning: unable to create diversion for {}: {}",
-                                      destination.display(), e);
-                        } else {
-                            diverts.push(format!("{}", destination.display()));
-                        }
-                    }
 
                     if file.ends_with(".mdt") {
                         destination.set_extension("mbn");
@@ -221,13 +214,5 @@ pub fn process(config: Config) -> Result<Status, Error> {
         let _r = fs::remove_dir(mntpath);
     }
 
-    let diversions = match diverts.len() {
-        0 => None,
-        _ => Some(diverts),
-    };
-
-    Ok(Status {
-        files,
-        diversions
-    })
+    Ok(Status { files })
 }
