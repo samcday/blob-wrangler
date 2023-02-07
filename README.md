@@ -6,10 +6,19 @@ vendor partitions on Android devices. It allows importing the needed
 firmware into the Linux system's `/lib/firmware` folder, avoiding the
 need to distribute such firmware and the corresponding legal issues.
 
-Please note that `droid-juicer` is aimed at Debian systems only for the
-moment, but can be extended to other systems in the future.
-
 ## Configuration
+
+A global `/etc/droid-juicer/config.toml` configuration file can be used
+to set device-independent options. This file currently only allows to
+configure post-processing commands, written as an array of strings.
+Those commands can include the special `%k` argument, which will be
+substituted at runtime with the revision (value of `uname -r`) for the
+currently running kernel.
+
+An example config (used on Debian systems) can be found in the
+[config.toml.sample](config.toml.sample) file.
+
+## Device configurations
 
 `droid-juicer` relies on per-device TOML config files named after the
 device's DT `compatible` property.
