@@ -1,7 +1,7 @@
 [Unit]
 Description=Android vendor firmware extraction
 Wants=sysinit.target make-dynpart-mappings@super.service
-After=-.mount tmp.mount boot.mount
+After=-.mount tmp.mount boot.mount make-dynpart-mappings@super.service
 ConditionPathExists=!/var/lib/droid-juicer/status.json
 
 [Service]
