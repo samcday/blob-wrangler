@@ -1,30 +1,30 @@
 [juicer]
 firmware = [
     { partition = "vendor", origin = "firmware", destination = "qcom/sdm845/pixel3", files = [
-            "a630_zap.mdt",
-            "adsp.mdt",
-            "adspr.jsn",
-            "adspua.jsn",
-            "cdsp.mdt",
-            "cdspr.jsn",
-            "ipa_fws.mdt",
-            "modemuw.jsn",
-            "slpi.mdt",
-            "venus.mdt",
-            "wlanmdsp.mbn",
+            { name = "a630_zap.mdt" },
+            { name = "adsp.mdt" },
+            { name = "adspr.jsn" },
+            { name = "adspua.jsn" },
+            { name = "cdsp.mdt" },
+            { name = "cdspr.jsn" },
+            { name = "ipa_fws.mdt" },
+            { name = "modemuw.jsn" },
+            { name = "slpi.mdt" },
+            { name = "venus.mdt" },
+            { name = "wlanmdsp.mbn" },
         ] },
     { partition = "vendor", origin = "firmware", destination = "qca/pixel3", files = [
-            "crnv21.bin",
+            { name = "crnv21.bin" },
         ] },
     { partition = "vendor", origin = "firmware", destination = "qca", files = [
-            "crbtfw21.tlv",
+            { name = "crbtfw21.tlv" },
         ] },
     { partition = "vendor", origin = "firmware", destination = "", files = [
-            "ftm5_fw.ftb",
+            { name = "ftm5_fw.ftb" },
         ] },
     { partition = "modem", origin = "image", destination = "qcom/sdm845/pixel3", files = [
-            "mba.mbn",
-            "modem.mdt",
-            "modemr.jsn",
+            { name = "mba.mbn" },
+            { name = "modem.mdt" },
+            { name = "modemr.jsn" },
         ] },
 ]

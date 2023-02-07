@@ -23,8 +23,10 @@ The config files contain a single section named `juicer` with a single
   files
 * `destination`: the `/lib/firmware` subfolder under which the firmware
   files must be copied; this folder will be created if it doesn't exist
-* `files`: an array of filenames; those are the firmware files to be
-  copied by `droid-juicer`
+* `files`: those are the firmware files to be copied by `droid-juicer`,
+  stored as simple objects with the following attributes:
+  * `name`: original file name
+  * `rename` (optional): name to rename the file to
 
 Example configurations can be found in the [configs](configs) folder.
 

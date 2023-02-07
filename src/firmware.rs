@@ -43,11 +43,17 @@ const FLAGS_READ_MASK: u32 = 0x07000000;
 const FLAGS_MDT_VALUE: u32 = 0x02000000;
 
 #[derive(Deserialize)]
+pub struct FwFile {
+    name: String,
+    rename: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub struct FwConfig {
     partition: String,
     origin: String,
     destination: String,
-    files: Vec<String>,
+    files: Vec<FwFile>,
 }
 
 #[derive(Deserialize)]
@@ -176,18 +182,21 @@ pub fn process(config: Config) -> Result<Status, Error> {
                 for file in entry.files {
                     let mut origin = PathBuf::from(&mntpath);
                     origin.push(&entry.origin);
-                    origin.push(&file);
+                    origin.push(&file.name);
                     if !origin.exists() {
                         eprintln!("Warning: unable to find {} on partition {}",
-                                  file, entry.partition);
+                                  file.name, entry.partition);
                         continue;
                     }
 
                     let mut destination = PathBuf::from(&destpath);
-                    destination.push(&file);
+                    if let Some(new_name) = file.rename {
+                        destination.push(&new_name);
+                    } else {
+                        destination.push(&file.name);
+                    }
 
-
-                    if file.ends_with(".mdt") {
+                    if file.name.ends_with(".mdt") {
                         destination.set_extension("mbn");
                         if let Err(e) = squash_file(&origin, &destination) {
                             eprintln!("Warning: unable to squash {} to {}: {}",
