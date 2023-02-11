@@ -2,10 +2,12 @@
 Description=Android vendor firmware extraction
 Wants=sysinit.target make-dynpart-mappings@super.service
 After=-.mount tmp.mount boot.mount make-dynpart-mappings@super.service
+Before=plymouth-quit.service display-manager.service
 ConditionPathExists=!/var/lib/droid-juicer/status.json
 
 [Service]
 Type=oneshot
+ExecStartPre=-/usr/bin/plymouth display-message --text="Extracting binary firmware..."
 ExecStart=/usr/bin/droid-juicer
 ExecStartPost=/usr/sbin/reboot
 
