@@ -22,7 +22,7 @@ firmware = [
             { name = "wlanmdsp.mbn" },
         ] },
     { partition = "bluetooth", origin = "image", destination = "qca", files = [
-            { name = "crnv21.bin" },
-            { name = "crbtfw21.tlv" },
+            { name = "apnv11.bin" },
+            { name = "apbtfw11.tlv" },
         ] },
 ]
