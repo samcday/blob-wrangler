@@ -1,0 +1,24 @@
+[juicer]
+firmware = [
+    { partition = "vendor", origin = "firmware", destination = "qcom/qcm6490/fairphone5", files = [
+            { name = "a660_zap.mdt" },
+            { name = "vpu20_1v.mdt", rename = "venus.mdt" },
+            { name = "yupik_ipa_fws.mdt", rename = "ipa_fws.mdt" },
+        ] },
+    { partition = "modem", origin = "image", destination = "qcom/qcm6490/fairphone5", files = [
+            { name = "adsp.mdt" },
+            { name = "adspr.jsn" },
+            { name = "adsps.jsn" },
+            { name = "adspua.jsn" },
+            { name = "battmgr.jsn" },
+            { name = "cdsp.mdt" },
+            { name = "cdspr.jsn" },
+            { name = "modem.mdt" },
+            { name = "modemr.jsn" },
+            { name = "wpss.mdt" },
+        ] },
+    { partition = "bluetooth", origin = "image", destination = "qca", files = [
+            { name = "msbtfw11.mbn" },
+            { name = "msnv11.bin" },
+        ] },
+]
