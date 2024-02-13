@@ -1,0 +1,26 @@
+[juicer]
+firmware = [
+    { partition = "vendor", origin = "firmware", destination = "qcom/sdm670/sargo", files = [
+            { name = "a615_zap.mdt" },
+            { name = "adsp.mdt" },
+            { name = "adspr.jsn" },
+            { name = "adspua.jsn" },
+            { name = "cdsp.mdt" },
+            { name = "cdspr.jsn" },
+            { name = "ipa_fws.mdt" },
+            { name = "modemuw.jsn" },
+            { name = "venus.mdt" },
+            { name = "wlanmdsp.mbn" },
+        ] },
+    { partition = "vendor", origin = "firmware", destination = "qca/sargo", files = [
+            { name = "crnv21.bin" },
+        ] },
+    { partition = "vendor", origin = "firmware", destination = "qca", files = [
+            { name = "crbtfw21.tlv" },
+        ] },
+    { partition = "modem", origin = "image", destination = "qcom/sdm670/sargo", files = [
+            { name = "mba.mbn" },
+            { name = "modem.mdt" },
+            { name = "modemr.jsn" },
+        ] },
+]
