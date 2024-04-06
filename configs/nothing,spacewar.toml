@@ -7,6 +7,7 @@ firmware = [
     { partition = "vendor", origin = "firmware", destination = "qcom/sm7325/nothing-spacewar", files = [
             { name = "a660_zap.mdt" },
             { name = "ipa_fws.mdt" },
+	    { name = "vpu20_1v.mbn", rename = "venus.mdt" },
         ] },
     { partition = "modem", origin = "image", destination = "qcom/sm7325/nothing-spacewar", files = [
             { name = "adsp.mdt" },
