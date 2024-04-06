@@ -1,0 +1,28 @@
+[juicer]
+firmware = [
+    { partition = "vendor", origin = "firmware", destination = "qcom", files = [
+            { name = "a660_gmu.bin" },
+            { name = "a660_sqe.fw" },
+        ] },
+    { partition = "vendor", origin = "firmware", destination = "qcom/sm7325/nothing-spacewar", files = [
+            { name = "a615_zap.mdt" },
+            { name = "ipa_fws.mdt" },
+            { name = "vpu20_1v.mdt", rename = "venus.mdt" },
+        ] },
+    { partition = "modem", origin = "image", destination = "qcom/sm7325/nothing-spacewar", files = [
+            { name = "adsp.mdt" },
+            { name = "cdsp.mdt" },
+            { name = "wpss.mdt" },
+            { name = "modem.mdt" },
+            { name = "adspr.jsn" },
+            { name = "adsps.jsn" },
+            { name = "adspua.jsn" },
+            { name = "cdspr.jsn" },
+            { name = "modemr.jsn" },
+        ] },
+    { partition = "bluetooth", origin = "image", destination = "qca", files = [
+            { name = "msbtfw11.mbn" },
+            { name = "msnv11.bin" },
+        ] },
+]
+
