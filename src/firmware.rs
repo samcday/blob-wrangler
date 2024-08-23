@@ -39,8 +39,11 @@ use goblin::elf::Elf;
 use serde::{ Serialize, Deserialize };
 use sys_mount::{Mount, MountFlags, Unmount, UnmountFlags};
 
+use crate::utils;
+
 const FLAGS_READ_MASK: u32 = 0x07000000;
 const FLAGS_MDT_VALUE: u32 = 0x02000000;
+const PARTLABEL_DIR: &str = "/dev/disk/by-partlabel";
 
 #[derive(Deserialize)]
 pub struct FwFile {
@@ -58,7 +61,8 @@ pub struct FwConfig {
 
 #[derive(Deserialize)]
 pub struct Config {
-    firmware: Vec<FwConfig>
+    dynpart: Option<String>,
+    firmware: Vec<FwConfig>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -82,7 +86,7 @@ fn mount_part(part: &str, mountpath: &PathBuf) -> Result<Mount, Error> {
         srcpath.set_file_name(format!("{}_a", part));
     }
     if !srcpath.exists() {
-        srcpath = PathBuf::from("/dev/disk/by-partlabel");
+        srcpath = PathBuf::from(PARTLABEL_DIR);
         srcpath.push(part);
     }
     if !srcpath.exists() {
@@ -168,8 +172,41 @@ fn squash_file(inpath: &PathBuf, outpath: &PathBuf) -> Result<(), Error> {
     Ok(())
 }
 
+fn map_dynpart(part: &str) -> Result<(), Error> {
+    let dynpart = PathBuf::from(PARTLABEL_DIR).join(part);
+    if dynpart.exists() {
+        utils::execute(
+            "systemctl",
+            Some(vec![
+                "start",
+                &format!("make-dynpart-mappings@{}.service", part)
+            ])
+        )
+    } else {
+        let err_str = format!("Warning: unable to find super partition '{}'", part);
+        Err(Error::new(ErrorKind::Other, err_str))
+    }
+}
+
 pub fn process(config: Config) -> Result<Status, Error> {
     let mut files: Vec<String> = Vec::new();
+
+    // Map the "super" partition if we expect one
+    if let Some(part) = config.dynpart {
+        let mut success = false;
+
+        for suffix in ["", "_a", "_b"] {
+            let testpart = format!("{}{}", part, suffix);
+            if let Ok(_) = map_dynpart(&testpart) {
+                success = true;
+                break;
+            }
+        }
+
+        if !success {
+            return Err(Error::new(ErrorKind::Other, "Failed to map super partition!"));
+        }
+    }
 
     for entry in config.firmware {
         let mut destpath = PathBuf::from("/lib/firmware/updates");
