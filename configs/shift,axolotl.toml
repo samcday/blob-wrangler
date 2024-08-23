@@ -1,4 +1,5 @@
 [juicer]
+dynpart = "super"
 firmware = [
     { partition = "vendor", origin = "firmware", destination = "qcom/sdm845/axolotl", files = [
             { name = "a630_zap.mdt" },

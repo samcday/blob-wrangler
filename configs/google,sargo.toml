@@ -1,4 +1,5 @@
 [juicer]
+dynpart = "system"
 firmware = [
     { partition = "vendor", origin = "firmware", destination = "qcom/sdm670/sargo", files = [
             { name = "a615_zap.mdt" },

@@ -1,4 +1,5 @@
 [juicer]
+dynpart = "super"
 firmware = [
     { partition = "vendor", origin = "firmware", destination = "qcom", files = [
             { name = "a619_gmu.bin" },
