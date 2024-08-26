@@ -1,5 +1,5 @@
 use std::io::{Error, ErrorKind, Write};
-use std::{path::PathBuf, process::Command};
+use std::{path::Path, process::Command};
 
 pub fn execute(command: &str, arguments: Option<Vec<&str>>) -> Result<(), Error> {
     let mut exe = Command::new(command);
@@ -24,7 +24,7 @@ pub fn execute(command: &str, arguments: Option<Vec<&str>>) -> Result<(), Error>
     }
 }
 
-pub fn undivert(file: &PathBuf) -> Result<(), Error> {
+pub fn undivert(file: &Path) -> Result<(), Error> {
     let orig = format!("{}", file.display());
     let args = vec!["--package", "droid-juicer", "--rename", "--remove", &orig];
 

@@ -201,7 +201,7 @@ pub fn process(config: Config) -> Result<Status, Error> {
 
         for suffix in ["", "_a", "_b"] {
             let testpart = format!("{}{}", part, suffix);
-            if let Ok(_) = map_dynpart(&testpart) {
+            if map_dynpart(&testpart).is_ok() {
                 success = true;
                 break;
             }

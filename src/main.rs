@@ -54,7 +54,7 @@ fn detect_device() -> Result<String, Error> {
             };
             for value in compatibles.clone() {
                 let full_name = String::from(value) + ".toml";
-                if &fname == full_name.as_str() {
+                if fname == full_name.as_str() {
                     return Ok(value.to_string());
                 }
             }
@@ -85,9 +85,8 @@ fn main() -> Result<(), Error> {
     };
 
     if PathBuf::from(CONFIG_FILE_PATH).exists() {
-        match fs::read_to_string(CONFIG_FILE_PATH) {
-            Ok(contents) => main_config = toml::from_str(contents.as_str()).unwrap(),
-            _ => (),
+        if let Ok(contents) = fs::read_to_string(CONFIG_FILE_PATH) {
+            main_config = toml::from_str(contents.as_str())?;
         }
     }
 
