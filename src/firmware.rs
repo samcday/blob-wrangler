@@ -2,7 +2,7 @@
  * Heavily based on https://github.com/andersson/pil-squasher/, and as such:
  *
  * Copyright (c) 2019, Linaro Ltd.
- * Copyright (c) 2022, Arnaud Ferraris.
+ * Copyright (c) 2022-2024, Arnaud Ferraris.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -35,6 +35,8 @@
 use std::io::{Error, ErrorKind, Read, Seek, SeekFrom};
 use std::{fs, os::unix::prelude::FileExt, path::PathBuf};
 
+use std::io::prelude::*;
+
 use goblin::elf::Elf;
 use serde::{Deserialize, Serialize};
 use sys_mount::{Mount, MountFlags, Unmount, UnmountFlags};
@@ -60,9 +62,17 @@ pub struct FwConfig {
 }
 
 #[derive(Deserialize)]
+pub struct DumpConfig {
+    partition: String,
+    destination: String,
+    filename: String,
+}
+
+#[derive(Deserialize)]
 pub struct Config {
     dynpart: Option<String>,
     firmware: Vec<FwConfig>,
+    partdump: Option<Vec<DumpConfig>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -80,14 +90,12 @@ fn mount_part(part: &str, mountpath: &PathBuf) -> Result<Mount, Error> {
     let _res = fs::DirBuilder::new().recursive(true).create(mountpath);
     let flags = MountFlags::RDONLY;
 
-    let mut srcpath = PathBuf::from("/dev/mapper");
-    srcpath.push(part);
+    let mut srcpath = PathBuf::from("/dev/mapper").join(part);
     if !srcpath.exists() {
         srcpath.set_file_name(format!("{}_a", part));
     }
     if !srcpath.exists() {
-        srcpath = PathBuf::from(PARTLABEL_DIR);
-        srcpath.push(part);
+        srcpath = PathBuf::from(PARTLABEL_DIR).join(part);
     }
     if !srcpath.exists() {
         srcpath.set_file_name(format!("{}_a", part));
@@ -216,8 +224,7 @@ pub fn process(config: Config) -> Result<Status, Error> {
     }
 
     for entry in config.firmware {
-        let mut destpath = PathBuf::from("/lib/firmware/updates");
-        destpath.push(entry.destination);
+        let destpath = PathBuf::from("/lib/firmware/updates").join(entry.destination);
 
         if let Err(e) = fs::create_dir_all(&destpath) {
             eprintln!(
@@ -228,8 +235,7 @@ pub fn process(config: Config) -> Result<Status, Error> {
             continue;
         }
 
-        let mut mntpath = PathBuf::from("/tmp");
-        mntpath.push(entry.partition.as_str());
+        let mntpath = PathBuf::from("/tmp").join(&entry.partition);
 
         match mount_part(entry.partition.as_str(), &mntpath) {
             Ok(m) => {
@@ -243,11 +249,9 @@ pub fn process(config: Config) -> Result<Status, Error> {
                         continue;
                     }
 
-                    let mut destination = PathBuf::from(&destpath);
+                    let mut destination = PathBuf::from(&destpath).join(&file.name);
                     if let Some(new_name) = file.rename {
-                        destination.push(&new_name);
-                    } else {
-                        destination.push(&file.name);
+                        destination.set_file_name(&new_name);
                     }
 
                     if file.name.ends_with(".mdt") {
@@ -279,6 +283,36 @@ pub fn process(config: Config) -> Result<Status, Error> {
         }
 
         let _r = fs::remove_dir(mntpath);
+    }
+
+    if let Some(dumps) = config.partdump {
+        for entry in dumps {
+            let destpath = PathBuf::from("/lib/firmware/updates").join(&entry.destination);
+            if let Err(e) = fs::create_dir_all(&destpath) {
+                eprintln!(
+                    "Warning: unable to create folder {}: {}",
+                    destpath.display(),
+                    e
+                );
+                continue;
+            }
+
+            let origin = PathBuf::from(PARTLABEL_DIR).join(&entry.partition);
+            if !origin.exists() {
+                eprintln!("Warning: unable to find partition {}", entry.partition);
+                continue;
+            }
+
+            let destination = destpath.join(entry.filename);
+            let mut buffer: Vec<u8> = Vec::new();
+            let mut input = fs::File::open(origin)?;
+            let mut output = fs::File::create(&destination)?;
+
+            input.read_to_end(&mut buffer)?;
+            output.write_all(buffer.as_slice())?;
+
+            files.push(format!("{}", destination.display()));
+        }
     }
 
     Ok(Status { files })
