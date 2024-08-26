@@ -1,8 +1,8 @@
 mod firmware;
 mod utils;
 
-use std::{ fs, path::PathBuf };
-use std::io::{ Error, ErrorKind};
+use std::io::{Error, ErrorKind};
+use std::{fs, path::PathBuf};
 
 use clap::Parser;
 use serde::Deserialize;
@@ -73,7 +73,7 @@ fn main() -> Result<(), Error> {
         Some(str) => str,
         _ => match detect_device() {
             Ok(s) => s,
-            Err(e) => return Err(e)
+            Err(e) => return Err(e),
         },
     };
 
@@ -82,7 +82,7 @@ fn main() -> Result<(), Error> {
         _ => {
             eprintln!("Warning: unable to detect running kernel release!");
             String::from("all")
-        },
+        }
     };
 
     if PathBuf::from(CONFIG_FILE_PATH).exists() {
@@ -98,23 +98,25 @@ fn main() -> Result<(), Error> {
         if let Ok(f) = fs::File::open(STATUS_FILE_PATH) {
             let old_status: Option<firmware::OldStatus> = match serde_json::from_reader(&f) {
                 Ok(s) => Some(s),
-                Err(_) => None
+                Err(_) => None,
             };
             let status: firmware::Status = match old_status {
                 Some(s) => {
                     if let Some(d) = s.diversions {
                         for diversion in d {
                             if let Err(e) = utils::undivert(&PathBuf::from(&diversion)) {
-                                eprintln!("Warning: unable to remove diversion for {}: {}",
-                                          diversion, e);
+                                eprintln!(
+                                    "Warning: unable to remove diversion for {}: {}",
+                                    diversion, e
+                                );
                             }
                         }
                     }
                     firmware::Status { files: s.files }
-                },
+                }
                 _ => match serde_json::from_reader(f) {
                     Ok(s) => s,
-                    Err(e) => return Err(Error::new(ErrorKind::Other, e))
+                    Err(e) => return Err(Error::new(ErrorKind::Other, e)),
                 },
             };
 
@@ -142,7 +144,7 @@ fn main() -> Result<(), Error> {
         let config: Config = toml::from_str(contents.as_str()).unwrap();
         let status = match firmware::process(config.juicer) {
             Ok(s) => s,
-            Err(e) => return Err(e)
+            Err(e) => return Err(e),
         };
         if let Err(e) = fs::create_dir_all("/var/lib/droid-juicer/") {
             return Err(e);

@@ -32,11 +32,11 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-use std::{ fs, os::unix::prelude::FileExt, path::PathBuf };
-use std::io::{ Error, ErrorKind, Read, Seek, SeekFrom };
+use std::io::{Error, ErrorKind, Read, Seek, SeekFrom};
+use std::{fs, os::unix::prelude::FileExt, path::PathBuf};
 
 use goblin::elf::Elf;
-use serde::{ Serialize, Deserialize };
+use serde::{Deserialize, Serialize};
 use sys_mount::{Mount, MountFlags, Unmount, UnmountFlags};
 
 use crate::utils;
@@ -97,8 +97,12 @@ fn mount_part(part: &str, mountpath: &PathBuf) -> Result<Mount, Error> {
         Ok(m) => Ok(m),
         Err(e) => {
             if srcpath.ends_with("_a") {
-                eprintln!("Unable to mount {} on {}: {}",
-                          srcpath.display(), mountpath.display(), e);
+                eprintln!(
+                    "Unable to mount {} on {}: {}",
+                    srcpath.display(),
+                    mountpath.display(),
+                    e
+                );
                 srcpath.set_file_name(format!("{}_b", part));
                 println!("Mounting {} on {}", srcpath.display(), mountpath.display());
                 Mount::builder().flags(flags).mount(&srcpath, mountpath)
@@ -128,7 +132,7 @@ fn squash_file(inpath: &PathBuf, outpath: &PathBuf) -> Result<(), Error> {
 
     let mut count = 0;
     let mut hashoffset = 0;
-    
+
     let mut mdt_fd = fs::File::open(&inpath).unwrap();
     let mbn_fd = fs::File::create(outpath).unwrap();
 
@@ -152,7 +156,7 @@ fn squash_file(inpath: &PathBuf, outpath: &PathBuf) -> Result<(), Error> {
                 let _res = mdt_fd.read_exact(buffer.as_mut_slice());
             }
         }
-        
+
         if buffer.len() == 0 {
             let mut bxx_name = inpath.clone();
             bxx_name.set_extension(format!("b{:#02}", count - 1));
@@ -179,8 +183,8 @@ fn map_dynpart(part: &str) -> Result<(), Error> {
             "systemctl",
             Some(vec![
                 "start",
-                &format!("make-dynpart-mappings@{}.service", part)
-            ])
+                &format!("make-dynpart-mappings@{}.service", part),
+            ]),
         )
     } else {
         let err_str = format!("Warning: unable to find super partition '{}'", part);
@@ -204,7 +208,10 @@ pub fn process(config: Config) -> Result<Status, Error> {
         }
 
         if !success {
-            return Err(Error::new(ErrorKind::Other, "Failed to map super partition!"));
+            return Err(Error::new(
+                ErrorKind::Other,
+                "Failed to map super partition!",
+            ));
         }
     }
 
@@ -213,8 +220,11 @@ pub fn process(config: Config) -> Result<Status, Error> {
         destpath.push(entry.destination);
 
         if let Err(e) = fs::create_dir_all(&destpath) {
-            eprintln!("Warning: unable to create folder {}: {}",
-                      destpath.display(), e);
+            eprintln!(
+                "Warning: unable to create folder {}: {}",
+                destpath.display(),
+                e
+            );
             continue;
         }
 
@@ -224,12 +234,12 @@ pub fn process(config: Config) -> Result<Status, Error> {
         match mount_part(entry.partition.as_str(), &mntpath) {
             Ok(m) => {
                 for file in entry.files {
-                    let mut origin = PathBuf::from(&mntpath);
-                    origin.push(&entry.origin);
-                    origin.push(&file.name);
+                    let origin = PathBuf::from(&mntpath).join(&entry.origin).join(&file.name);
                     if !origin.exists() {
-                        eprintln!("Warning: unable to find {} on partition {}",
-                                  file.name, entry.partition);
+                        eprintln!(
+                            "Warning: unable to find {} on partition {}",
+                            file.name, entry.partition
+                        );
                         continue;
                     }
 
@@ -243,14 +253,22 @@ pub fn process(config: Config) -> Result<Status, Error> {
                     if file.name.ends_with(".mdt") {
                         destination.set_extension("mbn");
                         if let Err(e) = squash_file(&origin, &destination) {
-                            eprintln!("Warning: unable to squash {} to {}: {}",
-                                      origin.display(), destination.display(), e);
+                            eprintln!(
+                                "Warning: unable to squash {} to {}: {}",
+                                origin.display(),
+                                destination.display(),
+                                e
+                            );
                             continue;
                         }
                     } else {
                         if let Err(e) = fs::copy(&origin, &destination) {
-                            eprintln!("Warning: unable to copy {} to {}: {}",
-                                      origin.display(), destination.display(), e);
+                            eprintln!(
+                                "Warning: unable to copy {} to {}: {}",
+                                origin.display(),
+                                destination.display(),
+                                e
+                            );
                             continue;
                         }
                     }
@@ -258,7 +276,7 @@ pub fn process(config: Config) -> Result<Status, Error> {
                     files.push(format!("{}", destination.display()));
                 }
                 let _res = m.unmount(UnmountFlags::empty());
-            },
+            }
             Err(e) => return Err(e),
         }
 
