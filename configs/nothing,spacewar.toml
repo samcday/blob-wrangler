@@ -5,12 +5,12 @@ firmware = [
             { name = "a660_gmu.bin" },
             { name = "a660_sqe.fw" },
         ] },
-    { partition = "vendor", origin = "firmware", destination = "qcom/sm7325/nothing-spacewar", files = [
+    { partition = "vendor", origin = "firmware", destination = "qcom/sm7325/nothing/spacewar", files = [
             { name = "a660_zap.mdt" },
             { name = "yupik_ipa_fws.mdt", rename = "ipa_fws.mdt" },
-            { name = "vpu20_1v.mbn", rename = "venus.mbn" },
+            { name = "vpu20_1v.mbn" },
         ] },
-    { partition = "modem", origin = "image", destination = "qcom/sm7325/nothing-spacewar", files = [
+    { partition = "modem", origin = "image", destination = "qcom/sm7325/nothing/spacewar", files = [
             { name = "adsp.mdt" },
             { name = "cdsp.mdt" },
             { name = "wpss.mdt" },
