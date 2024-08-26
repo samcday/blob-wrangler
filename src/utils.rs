@@ -2,7 +2,7 @@ use std::io::{Error, ErrorKind, Write};
 use std::{path::PathBuf, process::Command};
 
 pub fn execute(command: &str, arguments: Option<Vec<&str>>) -> Result<(), Error> {
-    let mut exe = Command::new(&command);
+    let mut exe = Command::new(command);
 
     if let Some(args) = arguments {
         exe.args(args);

@@ -6,7 +6,6 @@ use std::{fs, path::PathBuf};
 
 use clap::Parser;
 use serde::Deserialize;
-use uname;
 
 const STATUS_FILE_PATH: &str = "/var/lib/droid-juicer/status.json";
 const CONFIG_DIR_PATH: &str = "/usr/share/droid-juicer/configs";
@@ -45,7 +44,7 @@ fn detect_device() -> Result<String, Error> {
         _ => Default::default(),
     };
 
-    let compatibles: Vec<&str> = contents.split("\0").filter(|s| s.len() > 0).collect();
+    let compatibles: Vec<&str> = contents.split('\0').filter(|s| !s.is_empty()).collect();
 
     for entry in fs::read_dir(CONFIG_DIR_PATH) {
         for file in entry {
@@ -146,9 +145,7 @@ fn main() -> Result<(), Error> {
             Ok(s) => s,
             Err(e) => return Err(e),
         };
-        if let Err(e) = fs::create_dir_all("/var/lib/droid-juicer/") {
-            return Err(e);
-        }
+        fs::create_dir_all("/var/lib/droid-juicer/")?;
         if let Ok(f) = fs::File::create(STATUS_FILE_PATH) {
             if let Err(e) = serde_json::to_writer_pretty(f, &status) {
                 return Err(Error::new(ErrorKind::Other, e));
@@ -158,7 +155,7 @@ fn main() -> Result<(), Error> {
 
     for cmdline in main_config.postprocess.commands {
         let full_cmd = cmdline.replace("%k", krel.as_str());
-        let mut cmd = full_cmd.split(" ").collect::<Vec<_>>();
+        let mut cmd = full_cmd.split(' ').collect::<Vec<_>>();
         if cmd.is_empty() {
             continue;
         }
@@ -167,9 +164,7 @@ fn main() -> Result<(), Error> {
             true => None,
             _ => Some(args_list),
         };
-        if let Err(e) = utils::execute(cmd[0], args) {
-            return Err(e);
-        }
+        utils::execute(cmd[0], args)?
     }
 
     Ok(())

@@ -114,7 +114,7 @@ fn mount_part(part: &str, mountpath: &PathBuf) -> Result<Mount, Error> {
 }
 
 fn squash_file(inpath: &PathBuf, outpath: &PathBuf) -> Result<(), Error> {
-    let buffer = match fs::read(&inpath) {
+    let buffer = match fs::read(inpath) {
         Ok(buf) => buf,
         Err(e) => {
             eprintln!("Unable to read {}: {}", inpath.display(), e);
@@ -133,7 +133,7 @@ fn squash_file(inpath: &PathBuf, outpath: &PathBuf) -> Result<(), Error> {
     let mut count = 0;
     let mut hashoffset = 0;
 
-    let mut mdt_fd = fs::File::open(&inpath).unwrap();
+    let mut mdt_fd = fs::File::open(inpath).unwrap();
     let mbn_fd = fs::File::create(outpath).unwrap();
 
     for ref phdr in elf.program_headers {
@@ -157,7 +157,7 @@ fn squash_file(inpath: &PathBuf, outpath: &PathBuf) -> Result<(), Error> {
             }
         }
 
-        if buffer.len() == 0 {
+        if buffer.is_empty() {
             let mut bxx_name = inpath.clone();
             bxx_name.set_extension(format!("b{:#02}", count - 1));
 
@@ -261,16 +261,14 @@ pub fn process(config: Config) -> Result<Status, Error> {
                             );
                             continue;
                         }
-                    } else {
-                        if let Err(e) = fs::copy(&origin, &destination) {
-                            eprintln!(
-                                "Warning: unable to copy {} to {}: {}",
-                                origin.display(),
-                                destination.display(),
-                                e
-                            );
-                            continue;
-                        }
+                    } else if let Err(e) = fs::copy(&origin, &destination) {
+                        eprintln!(
+                            "Warning: unable to copy {} to {}: {}",
+                            origin.display(),
+                            destination.display(),
+                            e
+                        );
+                        continue;
                     }
 
                     files.push(format!("{}", destination.display()));
