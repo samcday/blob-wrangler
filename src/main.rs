@@ -46,7 +46,7 @@ fn detect_device() -> Result<String, Error> {
 
     let compatibles: Vec<&str> = contents.split('\0').filter(|s| !s.is_empty()).collect();
 
-    for entry in fs::read_dir(CONFIG_DIR_PATH) {
+    while let Ok(entry) = fs::read_dir(CONFIG_DIR_PATH) {
         for file in entry {
             let fname = match file {
                 Ok(dirent) => dirent.file_name(),
