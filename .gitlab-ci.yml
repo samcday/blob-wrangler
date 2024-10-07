@@ -1,0 +1,29 @@
+image: rust:latest
+
+before_script:
+    - rustc --version && cargo --version  # Print version info for debugging
+    - apt update && apt install -y --no-install-recommends libclang-dev # Required build dependency for loopdev-3
+
+stages:
+  - check
+  - build
+  - test
+
+check-job:
+  stage: check
+  script:
+    - rustup component add clippy rustfmt
+    - cargo fmt --all -- --check
+    - cargo clippy --all-targets --all-features -- -D warnings
+
+build-job:
+  stage: build
+  script:
+    - cargo build --release
+
+test-job:
+  stage: test
+  variables:
+    RUST_BACKTRACE: 1
+  script:
+    - cargo test
