@@ -39,10 +39,7 @@ struct MainConfig {
 }
 
 fn detect_device() -> Result<String, Error> {
-    let contents = match fs::read_to_string("/proc/device-tree/compatible") {
-        Ok(str) => str,
-        _ => Default::default(),
-    };
+    let contents = fs::read_to_string("/proc/device-tree/compatible").unwrap_or_default();
 
     let compatibles: Vec<&str> = contents.split('\0').filter(|s| !s.is_empty()).collect();
 
