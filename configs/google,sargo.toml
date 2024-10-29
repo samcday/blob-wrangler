@@ -13,6 +13,9 @@ firmware = [
             { name = "venus.mdt" },
             { name = "wlanmdsp.mbn" },
         ] },
+    { partition = "vendor", origin = "etc/acdbdata/OEM/sdm670-intcodec-s4-snd-card", destination = "qcom/sdm670/sargo", files = [
+            { name = "Global_cal.acdb" },
+        ] },
     { partition = "vendor", origin = "firmware", destination = "qca/sargo", files = [
             { name = "crnv21.bin" },
         ] },
