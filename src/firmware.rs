@@ -37,6 +37,7 @@ use std::{fs, os::unix::prelude::FileExt, path::PathBuf};
 
 use std::io::prelude::*;
 
+use fs_extra::dir;
 use goblin::elf::Elf;
 use serde::{Deserialize, Serialize};
 use sys_mount::{Mount, MountFlags, Unmount, UnmountFlags};
@@ -62,6 +63,13 @@ pub struct FwConfig {
 }
 
 #[derive(Deserialize)]
+pub struct FwFolder {
+    partition: String,
+    destination: String,
+    folders: Vec<FwFile>,
+}
+
+#[derive(Deserialize)]
 pub struct DumpConfig {
     partition: String,
     destination: String,
@@ -72,12 +80,14 @@ pub struct DumpConfig {
 pub struct Config {
     dynpart: Option<String>,
     firmware: Vec<FwConfig>,
+    folders: Option<Vec<FwFolder>>,
     partdump: Option<Vec<DumpConfig>>,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct Status {
     pub files: Vec<String>,
+    pub folders: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -202,6 +212,7 @@ fn map_dynpart(part: &str) -> Result<(), Error> {
 
 pub fn process(config: Config) -> Result<Status, Error> {
     let mut files: Vec<String> = Vec::new();
+    let mut folders: Option<Vec<String>> = None;
 
     // Map the "super" partition if we expect one
     if let Some(part) = config.dynpart {
@@ -285,6 +296,68 @@ pub fn process(config: Config) -> Result<Status, Error> {
         let _r = fs::remove_dir(mntpath);
     }
 
+    if let Some(dirs) = config.folders {
+        let options = dir::CopyOptions::new();
+        let mut folder_list = Vec::new();
+
+        for entry in dirs {
+            let destpath = PathBuf::from(entry.destination);
+
+            if let Err(e) = fs::create_dir_all(&destpath) {
+                eprintln!(
+                    "Warning: unable to create folder {}: {}",
+                    destpath.display(),
+                    e
+                );
+                continue;
+            }
+
+            let mntpath = PathBuf::from("/tmp").join(&entry.partition);
+
+            match mount_part(entry.partition.as_str(), &mntpath) {
+                Ok(m) => {
+                    for folder in entry.folders {
+                        let origin = PathBuf::from(&mntpath).join(&folder.name);
+                        if !origin.exists() {
+                            eprintln!(
+                                "Warning: unable to find {} on partition {}",
+                                folder.name, entry.partition
+                            );
+                            continue;
+                        }
+
+                        if let Err(e) = dir::copy(&origin, &destpath, &options) {
+                            eprintln!(
+                                "Warning: unable to copy {} to {}: {}",
+                                origin.display(),
+                                destpath.display(),
+                                e
+                            );
+                            continue;
+                        }
+
+                        let mut destination =
+                            PathBuf::from(&destpath).join(origin.file_name().unwrap());
+                        if let Some(new_name) = folder.rename {
+                            let initial_folder = PathBuf::from(&destination);
+                            destination.set_file_name(&new_name);
+                            let _ = fs::rename(initial_folder, &destination);
+                        }
+                        folder_list.push(format!("{}", destination.display()));
+                    }
+                    let _res = m.unmount(UnmountFlags::empty());
+                }
+                Err(e) => return Err(e),
+            }
+
+            let _r = fs::remove_dir(mntpath);
+        }
+
+        if !folder_list.is_empty() {
+            folders = Some(folder_list);
+        }
+    }
+
     if let Some(dumps) = config.partdump {
         for entry in dumps {
             let destpath = PathBuf::from("/lib/firmware/updates").join(&entry.destination);
@@ -315,5 +388,5 @@ pub fn process(config: Config) -> Result<Status, Error> {
         }
     }
 
-    Ok(Status { files })
+    Ok(Status { files, folders })
 }

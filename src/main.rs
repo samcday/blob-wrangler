@@ -107,7 +107,10 @@ fn main() -> Result<(), Error> {
                             }
                         }
                     }
-                    firmware::Status { files: s.files }
+                    firmware::Status {
+                        files: s.files,
+                        folders: None,
+                    }
                 }
                 _ => match serde_json::from_reader(f) {
                     Ok(s) => s,
@@ -115,9 +118,12 @@ fn main() -> Result<(), Error> {
                 },
             };
 
-            for file in status.files {
-                if let Err(e) = fs::remove_file(&file) {
-                    eprintln!("Warning: unable to remove {}: {}", file, e);
+            if let Err(e) = fs_extra::remove_items(&status.files) {
+                eprintln!("Warning: unable to remove files: {}", e);
+            }
+            if let Some(folders) = status.folders {
+                if let Err(e) = fs_extra::remove_items(&folders) {
+                    eprintln!("Warning: unable to remove folders: {}", e);
                 }
             }
             if let Err(e) = fs::remove_file(STATUS_FILE_PATH) {

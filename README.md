@@ -23,19 +23,43 @@ An example config (used on Debian systems) can be found in the
 `droid-juicer` relies on per-device TOML config files named after the
 device's DT `compatible` property.
 
-The config files contain a single section named `juicer` with a single
+The config files contain a single section named `juicer` with a mandatory
 `firmware` key. The expected value for this key is an array of
 "objects" with the following attributes:
 * `partition`: the name of the vendor partition containing the firmware
   files as it appears under `/dev/disk/by-partlabel/`.
 * `origin`: the folder of the vendor partition containing the firmware
   files
-* `destination`: the `/lib/firmware` subfolder under which the firmware
-  files must be copied; this folder will be created if it doesn't exist
+* `destination`: the `/lib/firmware/updates` subfolder under which the
+  firmware files must be copied; this folder will be created if it
+  doesn't exist
 * `files`: those are the firmware files to be copied by `droid-juicer`,
   stored as simple objects with the following attributes:
   * `name`: original file name
   * `rename` (optional): name to rename the file to
+
+An optional `folders` key can be added to the config, in order to easily
+copy entire folders. It expects an array of "object" very similar to
+`firmware` entries; those have the following attributes:
+* `partition`
+* `destination`: the absolute path to the destination folder, which will
+  be created if needed; unlike `firmware` entries, this folder can be
+  located anywhere, not only under `/lib/firmware/updates`
+* `folders`: those are the folders to be copied by `droid-juicer`,
+  stored as simple objects with the following attributes:
+  * `name`: folder path on the source partition; the last path component
+    will be used as the name of the copied folder
+  * `rename` (optional): name to rename the folder to
+
+An optional `partdump` key can be added to the config, allowing to dump
+entire partitions into a single file. It expects an array of "object"
+very similar to `firmware` entries, with the following attributes:
+* `partition`: the name of the vendor partition containing the firmware
+  files as it appears under `/dev/disk/by-partlabel/`.
+* `destination`: the `/lib/firmware/updates` subfolder under which the
+  firmware files must be copied; this folder will be created if it
+  doesn't exist
+* `filename`: the name of the file to which the partition will be dumped
 
 Example configurations can be found in the [configs](configs) folder.
 
