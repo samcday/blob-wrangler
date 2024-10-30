@@ -25,3 +25,13 @@ firmware = [
             { name = "modemr.jsn" },
         ] },
 ]
+folders = [
+    { partition = "vendor", destination = "/var/lib/droid-juicer/sensors", folders = [
+        { name = "dsp" },
+        { name = "etc/acdbdata", rename = "acdb" },
+        { name = "etc/sensors" },
+    ] },
+    { partition = "persist", destination = "/var/lib/droid-juicer/sensors/sensors", folders = [
+        { name = "sensors/registry/registry" },
+    ] },
+]
