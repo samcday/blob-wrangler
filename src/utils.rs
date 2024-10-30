@@ -1,5 +1,5 @@
 use std::io::{Error, ErrorKind, Write};
-use std::{path::Path, process::Command};
+use std::process::Command;
 
 pub fn execute(command: &str, arguments: Option<Vec<&str>>) -> Result<(), Error> {
     let mut exe = Command::new(command);
@@ -22,11 +22,4 @@ pub fn execute(command: &str, arguments: Option<Vec<&str>>) -> Result<(), Error>
         let err_str = format!("{}: unable to execute command!", command);
         Err(Error::new(ErrorKind::Other, err_str))
     }
-}
-
-pub fn undivert(file: &Path) -> Result<(), Error> {
-    let orig = format!("{}", file.display());
-    let args = vec!["--package", "droid-juicer", "--rename", "--remove", &orig];
-
-    execute("/usr/bin/dpkg-divert", Some(args))
 }

@@ -91,31 +91,9 @@ fn main() -> Result<(), Error> {
         println!("Cleaning up files for device {}", device);
 
         if let Ok(f) = fs::File::open(STATUS_FILE_PATH) {
-            let old_status: Option<firmware::OldStatus> = match serde_json::from_reader(&f) {
-                Ok(s) => Some(s),
-                Err(_) => None,
-            };
-            let status: firmware::Status = match old_status {
-                Some(s) => {
-                    if let Some(d) = s.diversions {
-                        for diversion in d {
-                            if let Err(e) = utils::undivert(&PathBuf::from(&diversion)) {
-                                eprintln!(
-                                    "Warning: unable to remove diversion for {}: {}",
-                                    diversion, e
-                                );
-                            }
-                        }
-                    }
-                    firmware::Status {
-                        files: s.files,
-                        folders: None,
-                    }
-                }
-                _ => match serde_json::from_reader(f) {
-                    Ok(s) => s,
-                    Err(e) => return Err(Error::new(ErrorKind::Other, e)),
-                },
+            let status: firmware::Status = match serde_json::from_reader(f) {
+                Ok(s) => s,
+                Err(e) => return Err(Error::new(ErrorKind::Other, e)),
             };
 
             if let Err(e) = fs_extra::remove_items(&status.files) {
