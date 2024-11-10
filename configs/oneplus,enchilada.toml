@@ -27,3 +27,18 @@ firmware = [
             { name = "crbtfw21.tlv" },
         ] },
 ]
+folders = [
+    { partition = "vendor", destination = "/var/lib/droid-juicer/sensors", folders = [
+        { name = "dsp" },
+        { name = "etc/acdbdata", rename = "acdb" },
+        { name = "etc/sensors" },
+    ] },
+    { partition = "dsp", destination = "/var/lib/droid-juicer/sensors/dsp", folders = [
+        { name = "adsp" },
+        { name = "cdsp" },
+        { name = "sdsp" },
+    ] },
+    { partition = "persist", destination = "/var/lib/droid-juicer/sensors/sensors", folders = [
+        { name = "sensors/registry/registry" },
+    ] },
+]
