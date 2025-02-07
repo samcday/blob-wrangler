@@ -67,10 +67,7 @@ fn main() -> Result<(), Error> {
 
     let device = match opt.device {
         Some(str) => str,
-        _ => match detect_device() {
-            Ok(s) => s,
-            Err(e) => return Err(e),
-        },
+        _ => detect_device()?,
     };
 
     let krel = match uname::uname() {
@@ -121,10 +118,7 @@ fn main() -> Result<(), Error> {
         };
 
         let config: Config = toml::from_str(contents.as_str()).unwrap();
-        let status = match firmware::process(config.juicer) {
-            Ok(s) => s,
-            Err(e) => return Err(e),
-        };
+        let status = firmware::process(config.juicer)?;
         fs::create_dir_all("/var/lib/droid-juicer/")?;
         if let Ok(f) = fs::File::create(STATUS_FILE_PATH) {
             if let Err(e) = serde_json::to_writer_pretty(f, &status) {
