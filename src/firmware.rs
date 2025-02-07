@@ -99,29 +99,31 @@ pub struct OldStatus {
 fn mount_part(part: &str, mountpath: &PathBuf) -> Result<Mount, Error> {
     let _res = fs::DirBuilder::new().recursive(true).create(mountpath);
     let flags = MountFlags::RDONLY;
+    let part_a = format!("{}_a", part);
+    let part_b = format!("{}_b", part);
 
     let mut srcpath = PathBuf::from("/dev/mapper").join(part);
     if !srcpath.exists() {
-        srcpath.set_file_name(format!("{}_a", part));
+        srcpath.set_file_name(&part_a);
     }
     if !srcpath.exists() {
         srcpath = PathBuf::from(PARTLABEL_DIR).join(part);
     }
     if !srcpath.exists() {
-        srcpath.set_file_name(format!("{}_a", part));
+        srcpath.set_file_name(&part_a);
     }
 
     match Mount::builder().flags(flags).mount(&srcpath, mountpath) {
         Ok(m) => Ok(m),
         Err(e) => {
-            if srcpath.ends_with("_a") {
+            if srcpath.ends_with(&part_a) {
                 eprintln!(
                     "Unable to mount {} on {}: {}",
                     srcpath.display(),
                     mountpath.display(),
                     e
                 );
-                srcpath.set_file_name(format!("{}_b", part));
+                srcpath.set_file_name(&part_b);
                 println!("Mounting {} on {}", srcpath.display(), mountpath.display());
                 Mount::builder().flags(flags).mount(&srcpath, mountpath)
             } else {
