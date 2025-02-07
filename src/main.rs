@@ -1,6 +1,10 @@
 mod firmware;
 mod utils;
 
+extern crate pretty_env_logger;
+#[macro_use]
+extern crate log;
+
 use std::io::{Error, ErrorKind};
 use std::{fs, path::PathBuf};
 
@@ -43,15 +47,19 @@ fn detect_device() -> Result<String, Error> {
 
     let compatibles: Vec<&str> = contents.split('\0').filter(|s| !s.is_empty()).collect();
 
+    debug!("Device compatible values: {:#?}", compatibles);
+
     while let Ok(entry) = fs::read_dir(CONFIG_DIR_PATH) {
         for file in entry {
             let fname = match file {
                 Ok(dirent) => dirent.file_name(),
                 _ => continue,
             };
+            debug!("Checking config file {}", fname.to_str().unwrap());
             for value in compatibles.clone() {
                 let full_name = String::from(value) + ".toml";
                 if fname == full_name.as_str() {
+                    debug!("Matched config file for compatible {}", value);
                     return Ok(value.to_string());
                 }
             }
@@ -73,7 +81,7 @@ fn main() -> Result<(), Error> {
     let krel = match uname::uname() {
         Ok(u) => u.release,
         _ => {
-            eprintln!("Warning: unable to detect running kernel release!");
+            warn!("Unable to detect running kernel release!");
             String::from("all")
         }
     };
@@ -85,7 +93,7 @@ fn main() -> Result<(), Error> {
     }
 
     if opt.cleanup {
-        println!("Cleaning up files for device {}", device);
+        info!("Cleaning up files for device {}", device);
 
         if let Ok(f) = fs::File::open(STATUS_FILE_PATH) {
             let status: firmware::Status = match serde_json::from_reader(f) {
@@ -94,19 +102,19 @@ fn main() -> Result<(), Error> {
             };
 
             if let Err(e) = fs_extra::remove_items(&status.files) {
-                eprintln!("Warning: unable to remove files: {}", e);
+                warn!("Unable to remove files: {}", e);
             }
             if let Some(folders) = status.folders {
                 if let Err(e) = fs_extra::remove_items(&folders) {
-                    eprintln!("Warning: unable to remove folders: {}", e);
+                    warn!("Unable to remove folders: {}", e);
                 }
             }
             if let Err(e) = fs::remove_file(STATUS_FILE_PATH) {
-                eprintln!("Warning: unable to remove {}: {}", STATUS_FILE_PATH, e);
+                warn!("Unable to remove {}: {}", STATUS_FILE_PATH, e);
             }
         }
     } else {
-        println!("Starting processing for device {}", device);
+        info!("Starting processing for device {}", device);
 
         let mut cfg_path = PathBuf::from(CONFIG_DIR_PATH);
         cfg_path.push(&device);
@@ -118,7 +126,9 @@ fn main() -> Result<(), Error> {
         };
 
         let config: Config = toml::from_str(contents.as_str()).unwrap();
+        debug!("Extracting firmware for device {}", device);
         let status = firmware::process(config.juicer)?;
+        debug!("Writing status file");
         fs::create_dir_all("/var/lib/droid-juicer/")?;
         if let Ok(f) = fs::File::create(STATUS_FILE_PATH) {
             if let Err(e) = serde_json::to_writer_pretty(f, &status) {
@@ -138,6 +148,7 @@ fn main() -> Result<(), Error> {
             true => None,
             _ => Some(args_list),
         };
+        debug!("Executing post-process command '{}'", full_cmd);
         utils::execute(cmd[0], args)?
     }
 

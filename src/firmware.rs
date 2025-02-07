@@ -113,18 +113,20 @@ fn mount_part(part: &str, mountpath: &PathBuf) -> Result<Mount, Error> {
         srcpath.set_file_name(&part_a);
     }
 
+    debug!("Attempting to mount {}", srcpath.display());
+
     match Mount::builder().flags(flags).mount(&srcpath, mountpath) {
         Ok(m) => Ok(m),
         Err(e) => {
             if srcpath.ends_with(&part_a) {
-                eprintln!(
+                error!(
                     "Unable to mount {} on {}: {}",
                     srcpath.display(),
                     mountpath.display(),
                     e
                 );
                 srcpath.set_file_name(&part_b);
-                println!("Mounting {} on {}", srcpath.display(), mountpath.display());
+                info!("Mounting {} on {}", srcpath.display(), mountpath.display());
                 Mount::builder().flags(flags).mount(&srcpath, mountpath)
             } else {
                 Err(e)
@@ -137,7 +139,7 @@ fn squash_file(inpath: &PathBuf, outpath: &PathBuf) -> Result<(), Error> {
     let buffer = match fs::read(inpath) {
         Ok(buf) => buf,
         Err(e) => {
-            eprintln!("Unable to read {}: {}", inpath.display(), e);
+            error!("Unable to read {}: {}", inpath.display(), e);
             return Err(e);
         }
     };
@@ -145,7 +147,7 @@ fn squash_file(inpath: &PathBuf, outpath: &PathBuf) -> Result<(), Error> {
     let elf = match Elf::parse(buffer.as_slice()) {
         Ok(value) => value,
         Err(e) => {
-            eprintln!("Unable to parse {}: {}", inpath.display(), e);
+            error!("Unable to parse {}: {}", inpath.display(), e);
             return Err(Error::new(ErrorKind::InvalidData, e));
         }
     };
@@ -207,7 +209,7 @@ fn map_dynpart(part: &str) -> Result<(), Error> {
             ]),
         )
     } else {
-        let err_str = format!("Warning: unable to find super partition '{}'", part);
+        let err_str = format!("Unable to find super partition '{}'", part);
         Err(Error::new(ErrorKind::Other, err_str))
     }
 }
@@ -218,10 +220,12 @@ pub fn process(config: Config) -> Result<Status, Error> {
 
     // Map the "super" partition if we expect one
     if let Some(part) = config.dynpart {
+        info!("Mounting {} as the 'super' partition", part);
         let mut success = false;
 
         for suffix in ["", "_a", "_b"] {
             let testpart = format!("{}{}", part, suffix);
+            debug!("Attempting to map dynpart {}", testpart);
             if map_dynpart(&testpart).is_ok() {
                 success = true;
                 break;
@@ -240,11 +244,7 @@ pub fn process(config: Config) -> Result<Status, Error> {
         let destpath = PathBuf::from("/lib/firmware/updates").join(entry.destination);
 
         if let Err(e) = fs::create_dir_all(&destpath) {
-            eprintln!(
-                "Warning: unable to create folder {}: {}",
-                destpath.display(),
-                e
-            );
+            warn!("Unable to create folder {}: {}", destpath.display(), e);
             continue;
         }
 
@@ -252,11 +252,15 @@ pub fn process(config: Config) -> Result<Status, Error> {
 
         match mount_part(entry.partition.as_str(), &mntpath) {
             Ok(m) => {
+                debug!(
+                    "Processing firmware files from partition {}",
+                    entry.partition.as_str()
+                );
                 for file in entry.files {
                     let origin = PathBuf::from(&mntpath).join(&entry.origin).join(&file.name);
                     if !origin.exists() {
-                        eprintln!(
-                            "Warning: unable to find {} on partition {}",
+                        warn!(
+                            "Unable to find {} on partition {}",
                             file.name, entry.partition
                         );
                         continue;
@@ -267,11 +271,14 @@ pub fn process(config: Config) -> Result<Status, Error> {
                         destination.set_file_name(&new_name);
                     }
 
+                    debug!("Copying firmware file {}", origin.display());
+
                     if file.name.ends_with(".mdt") {
+                        trace!("Squashing MDT file into MBN");
                         destination.set_extension("mbn");
                         if let Err(e) = squash_file(&origin, &destination) {
-                            eprintln!(
-                                "Warning: unable to squash {} to {}: {}",
+                            warn!(
+                                "Unable to squash {} to {}: {}",
                                 origin.display(),
                                 destination.display(),
                                 e
@@ -279,8 +286,8 @@ pub fn process(config: Config) -> Result<Status, Error> {
                             continue;
                         }
                     } else if let Err(e) = fs::copy(&origin, &destination) {
-                        eprintln!(
-                            "Warning: unable to copy {} to {}: {}",
+                        warn!(
+                            "Unable to copy {} to {}: {}",
                             origin.display(),
                             destination.display(),
                             e
@@ -306,11 +313,7 @@ pub fn process(config: Config) -> Result<Status, Error> {
             let destpath = PathBuf::from(entry.destination);
 
             if let Err(e) = fs::create_dir_all(&destpath) {
-                eprintln!(
-                    "Warning: unable to create folder {}: {}",
-                    destpath.display(),
-                    e
-                );
+                warn!("Unable to create folder {}: {}", destpath.display(), e);
                 continue;
             }
 
@@ -318,19 +321,25 @@ pub fn process(config: Config) -> Result<Status, Error> {
 
             match mount_part(entry.partition.as_str(), &mntpath) {
                 Ok(m) => {
+                    debug!(
+                        "Processing folders from partition {}",
+                        entry.partition.as_str()
+                    );
                     for folder in entry.folders {
                         let origin = PathBuf::from(&mntpath).join(&folder.name);
                         if !origin.exists() {
-                            eprintln!(
-                                "Warning: unable to find {} on partition {}",
+                            warn!(
+                                "Unable to find {} on partition {}",
                                 folder.name, entry.partition
                             );
                             continue;
                         }
 
+                        debug!("Copying folder {}", origin.display());
+
                         if let Err(e) = dir::copy(&origin, &destpath, &options) {
-                            eprintln!(
-                                "Warning: unable to copy {} to {}: {}",
+                            warn!(
+                                "Unable to copy {} to {}: {}",
                                 origin.display(),
                                 destpath.display(),
                                 e
@@ -362,19 +371,19 @@ pub fn process(config: Config) -> Result<Status, Error> {
 
     if let Some(dumps) = config.partdump {
         for entry in dumps {
+            debug!(
+                "Processing partition {} for raw dump",
+                entry.partition.as_str()
+            );
             let destpath = PathBuf::from("/lib/firmware/updates").join(&entry.destination);
             if let Err(e) = fs::create_dir_all(&destpath) {
-                eprintln!(
-                    "Warning: unable to create folder {}: {}",
-                    destpath.display(),
-                    e
-                );
+                warn!("Unable to create folder {}: {}", destpath.display(), e);
                 continue;
             }
 
             let origin = PathBuf::from(PARTLABEL_DIR).join(&entry.partition);
             if !origin.exists() {
-                eprintln!("Warning: unable to find partition {}", entry.partition);
+                warn!("Unable to find partition {}", entry.partition);
                 continue;
             }
 
