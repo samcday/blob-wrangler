@@ -1,0 +1,25 @@
+#!/sbin/openrc-run
+
+description="Android vendor firmware extraction"
+
+depend() {
+  after mount
+  after tmpfs
+  need localmount
+}
+
+start_pre() {
+  echo "Extracting binary firmware..."
+}
+
+start() {
+  if [ ! -f /var/lib/droid-juicer/status.json ]; then
+    /usr/bin/droid-juicer
+    /sbin/reboot
+  fi
+}
+
+stop() {
+  return 0
+}
+
