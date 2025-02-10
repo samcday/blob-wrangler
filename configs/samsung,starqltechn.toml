@@ -1,0 +1,23 @@
+[juicer]
+firmware = [
+    { partition = "apnhlos", origin = "image", destination = "qcom/sdm845/starqltechn", files = [
+            { name = "a630_zap.mdt" },
+            { name = "ipa_fws.mdt" },
+            { name = "cdsp.mdt" },
+            { name = "cdspr.jsn" },
+            { name = "slpi.mdt" },
+            { name = "slpir.jsn" },
+            { name = "slpius.jsn" },
+            { name = "venus.mdt" },
+        ] },
+    { partition = "modem", origin = "image", destination = "qcom/sdm845/starqltechn", files = [
+            { name = "adsp.mdt" },
+            { name = "adspr.jsn" },
+            { name = "adspua.jsn" },
+            { name = "mba.mbn" },
+            { name = "modem.mdt" },
+            { name = "modemr.jsn" },
+            { name = "modemuw.jsn" },
+        ] },
+]
+
