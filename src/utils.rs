@@ -1,4 +1,4 @@
-use std::io::{Error, ErrorKind, Write};
+use std::io::{Error, Write};
 use std::process::Command;
 
 pub fn execute(command: &str, arguments: Option<Vec<&str>>) -> Result<(), Error> {
@@ -16,10 +16,10 @@ pub fn execute(command: &str, arguments: Option<Vec<&str>>) -> Result<(), Error>
         } else {
             std::io::stderr().write_all(&out.stderr).unwrap();
             let err_str = format!("{} returned with exit code {}", command, out.status);
-            Err(Error::new(ErrorKind::Other, err_str))
+            Err(Error::other(err_str))
         }
     } else {
-        let err_str = format!("{}: unable to execute command!", command);
-        Err(Error::new(ErrorKind::Other, err_str))
+        let err_str = format!("{command}: unable to execute command!");
+        Err(Error::other(err_str))
     }
 }

@@ -47,7 +47,7 @@ fn detect_device() -> Result<String, Error> {
 
     let compatibles: Vec<&str> = contents.split('\0').filter(|s| !s.is_empty()).collect();
 
-    debug!("Device compatible values: {:#?}", compatibles);
+    debug!("Device compatible values: {compatibles:#?}");
 
     while let Ok(entry) = fs::read_dir(CONFIG_DIR_PATH) {
         for file in entry {
@@ -59,7 +59,7 @@ fn detect_device() -> Result<String, Error> {
             for value in compatibles.clone() {
                 let full_name = String::from(value) + ".toml";
                 if fname == full_name.as_str() {
-                    debug!("Matched config file for compatible {}", value);
+                    debug!("Matched config file for compatible {value}");
                     return Ok(value.to_string());
                 }
             }
@@ -93,28 +93,28 @@ fn main() -> Result<(), Error> {
     }
 
     if opt.cleanup {
-        info!("Cleaning up files for device {}", device);
+        info!("Cleaning up files for device {device}");
 
         if let Ok(f) = fs::File::open(STATUS_FILE_PATH) {
             let status: firmware::Status = match serde_json::from_reader(f) {
                 Ok(s) => s,
-                Err(e) => return Err(Error::new(ErrorKind::Other, e)),
+                Err(e) => return Err(Error::other(e)),
             };
 
             if let Err(e) = fs_extra::remove_items(&status.files) {
-                warn!("Unable to remove files: {}", e);
+                warn!("Unable to remove files: {e}");
             }
             if let Some(folders) = status.folders {
                 if let Err(e) = fs_extra::remove_items(&folders) {
-                    warn!("Unable to remove folders: {}", e);
+                    warn!("Unable to remove folders: {e}");
                 }
             }
             if let Err(e) = fs::remove_file(STATUS_FILE_PATH) {
-                warn!("Unable to remove {}: {}", STATUS_FILE_PATH, e);
+                warn!("Unable to remove {STATUS_FILE_PATH}: {e}");
             }
         }
     } else {
-        info!("Starting processing for device {}", device);
+        info!("Starting processing for device {device}");
 
         let mut cfg_path = PathBuf::from(CONFIG_DIR_PATH);
         cfg_path.push(&device);
@@ -126,13 +126,13 @@ fn main() -> Result<(), Error> {
         };
 
         let config: Config = toml::from_str(contents.as_str()).unwrap();
-        debug!("Extracting firmware for device {}", device);
+        debug!("Extracting firmware for device {device}");
         let status = firmware::process(config.juicer)?;
         debug!("Writing status file");
         fs::create_dir_all("/var/lib/droid-juicer/")?;
         if let Ok(f) = fs::File::create(STATUS_FILE_PATH) {
             if let Err(e) = serde_json::to_writer_pretty(f, &status) {
-                return Err(Error::new(ErrorKind::Other, e));
+                return Err(Error::other(e));
             }
         }
     }
@@ -148,7 +148,7 @@ fn main() -> Result<(), Error> {
             true => None,
             _ => Some(args_list),
         };
-        debug!("Executing post-process command '{}'", full_cmd);
+        debug!("Executing post-process command '{full_cmd}'");
         utils::execute(cmd[0], args)?
     }
 

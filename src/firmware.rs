@@ -99,8 +99,8 @@ pub struct OldStatus {
 fn mount_part(part: &str, mountpath: &PathBuf) -> Result<Mount, Error> {
     let _res = fs::DirBuilder::new().recursive(true).create(mountpath);
     let flags = MountFlags::RDONLY;
-    let part_a = format!("{}_a", part);
-    let part_b = format!("{}_b", part);
+    let part_a = format!("{part}_a");
+    let part_b = format!("{part}_b");
 
     let mut srcpath = PathBuf::from("/dev/mapper").join(part);
     if !srcpath.exists() {
@@ -205,12 +205,12 @@ fn map_dynpart(part: &str) -> Result<(), Error> {
             "systemctl",
             Some(vec![
                 "start",
-                &format!("make-dynpart-mappings@{}.service", part),
+                &format!("make-dynpart-mappings@{part}.service"),
             ]),
         )
     } else {
-        let err_str = format!("Unable to find super partition '{}'", part);
-        Err(Error::new(ErrorKind::Other, err_str))
+        let err_str = format!("Unable to find super partition '{part}'");
+        Err(Error::other(err_str))
     }
 }
 
@@ -220,12 +220,12 @@ pub fn process(config: Config) -> Result<Status, Error> {
 
     // Map the "super" partition if we expect one
     if let Some(part) = config.dynpart {
-        info!("Mounting {} as the 'super' partition", part);
+        info!("Mounting {part} as the 'super' partition");
         let mut success = false;
 
         for suffix in ["", "_a", "_b"] {
-            let testpart = format!("{}{}", part, suffix);
-            debug!("Attempting to map dynpart {}", testpart);
+            let testpart = format!("{part}{suffix}");
+            debug!("Attempting to map dynpart {testpart}");
             if map_dynpart(&testpart).is_ok() {
                 success = true;
                 break;
@@ -233,10 +233,7 @@ pub fn process(config: Config) -> Result<Status, Error> {
         }
 
         if !success {
-            return Err(Error::new(
-                ErrorKind::Other,
-                "Failed to map super partition!",
-            ));
+            return Err(Error::other("Failed to map super partition!"));
         }
     }
 
