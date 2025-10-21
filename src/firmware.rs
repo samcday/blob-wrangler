@@ -90,12 +90,6 @@ pub struct Status {
     pub folders: Option<Vec<String>>,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct OldStatus {
-    pub files: Vec<String>,
-    pub diversions: Option<Vec<String>>,
-}
-
 fn mount_part(part: &str, mountpath: &PathBuf) -> Result<Mount, Error> {
     let _res = fs::DirBuilder::new().recursive(true).create(mountpath);
     let flags = MountFlags::RDONLY;
