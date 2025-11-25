@@ -1,0 +1,26 @@
+[juicer]
+dynpart = "super"
+firmware = [
+    { partition = "vendor", origin = "firmware", destination = "qcom/sm7150/google/sunfish", files = [
+            { name = "a615_zap.mdt" },
+            { name = "adsp.mdt" },
+            { name = "adspr.jsn" },
+            { name = "adsps.jsn" },
+            { name = "adspua.jsn" },
+            { name = "cdsp.mdt" },
+            { name = "cdspr.jsn" },
+            { name = "ipa_fws.mdt" },
+            { name = "modemuw.jsn" },
+            { name = "venus.mdt" },
+            { name = "wlanmdsp.mbn" },
+        ] },
+    { partition = "modem", origin = "image", destination = "qcom/sm7150/google/sunfish", files = [
+            { name = "modem.mdt" },
+            { name = "modemr.jsn" },
+        ] },
+# Having those firmware files in the rootfs make the device crash during boot
+#    { partition = "vendor", origin = "firmware", destination = "qca", files = [
+#            { name = "crnv21.bin", rename = "crnv01.bin" },
+#            { name = "crbtfw21.tlv", rename = "crbtfw01.tlv" },
+#        ] },
+]

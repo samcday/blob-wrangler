@@ -1,0 +1,25 @@
+[juicer]
+firmware = [
+    { partition = "vendor", origin = "firmware", destination = "qcom/sm7150/xiaomi/davinci", files = [
+            { name = "a615_zap.mdt" },
+# Having this firmware file in the rootfs makes the device crash during boot
+#            { name = "ipa_fws.mdt" },
+        ] },
+    { partition = "modem", origin = "image", destination = "qcom/sm7150/xiaomi/davinci", files = [
+            { name = "adsp.mdt" },
+            { name = "adspr.jsn" },
+            { name = "adsps.jsn" },
+            { name = "adspua.jsn" },
+            { name = "cdsp.mdt" },
+            { name = "cdspr.jsn" },
+            { name = "modem.mdt" },
+            { name = "modemr.jsn" },
+            { name = "modemuw.jsn" },
+            { name = "venus.mdt" },
+            { name = "wlanmdsp.mbn" },
+        ] },
+    { partition = "bluetooth", origin = "image", destination = "qca", files = [
+            { name = "crnv21.bin" },
+            { name = "crbtfw21.tlv" },
+        ] },
+]
