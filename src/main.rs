@@ -73,6 +73,8 @@ fn main() -> Result<(), Error> {
     let opt = Opt::parse();
     let mut main_config = MainConfig::default();
 
+    pretty_env_logger::init();
+
     let device = match opt.device {
         Some(str) => str,
         _ => detect_device()?,
