@@ -40,6 +40,7 @@ struct PostProcessConfig {
 }
 
 #[derive(Deserialize)]
+#[serde(default)]
 struct MainConfig {
     extract_path: String,
     postprocess: PostProcessConfig,
@@ -95,7 +96,6 @@ fn detect_device() -> Result<String, Error> {
 
 fn main() -> Result<(), Error> {
     let opt = Opt::parse();
-    let mut main_config = MainConfig::default();
 
     pretty_env_logger::init();
 
@@ -112,11 +112,10 @@ fn main() -> Result<(), Error> {
         }
     };
 
-    if PathBuf::from(CONFIG_FILE_PATH).exists() {
-        if let Ok(contents) = fs::read_to_string(CONFIG_FILE_PATH) {
-            main_config = toml::from_str(contents.as_str())?;
-        }
-    }
+    let main_config = match fs::read_to_string(CONFIG_FILE_PATH) {
+        Ok(contents) => toml::from_str(contents.as_str())?,
+        Err(_) => MainConfig::default(),
+    };
 
     if opt.cleanup {
         info!("Cleaning up files for device {device}");
