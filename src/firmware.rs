@@ -208,7 +208,7 @@ fn map_dynpart(part: &str) -> Result<(), Error> {
     }
 }
 
-pub fn process(config: Config) -> Result<Status, Error> {
+pub fn process(config: Config, extract_path: &String) -> Result<Status, Error> {
     let mut files: Vec<String> = Vec::new();
     let mut folders: Option<Vec<String>> = None;
 
@@ -232,7 +232,7 @@ pub fn process(config: Config) -> Result<Status, Error> {
     }
 
     for entry in config.firmware {
-        let destpath = PathBuf::from("/lib/firmware/updates").join(entry.destination);
+        let destpath = PathBuf::from(extract_path).join(entry.destination);
 
         if let Err(e) = fs::create_dir_all(&destpath) {
             warn!("Unable to create folder {}: {}", destpath.display(), e);
@@ -366,7 +366,7 @@ pub fn process(config: Config) -> Result<Status, Error> {
                 "Processing partition {} for raw dump",
                 entry.partition.as_str()
             );
-            let destpath = PathBuf::from("/lib/firmware/updates").join(&entry.destination);
+            let destpath = PathBuf::from(extract_path).join(&entry.destination);
             if let Err(e) = fs::create_dir_all(&destpath) {
                 warn!("Unable to create folder {}: {}", destpath.display(), e);
                 continue;
