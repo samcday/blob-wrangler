@@ -107,8 +107,12 @@ fn mount_part(part: &str, mountpath: &PathBuf) -> Result<Mount, Error> {
         srcpath.set_file_name(&part_a);
     }
 
-    debug!("Attempting to mount {} to {}", srcpath.display(), mountpath.display());
-    
+    debug!(
+        "Attempting to mount {} to {}",
+        srcpath.display(),
+        mountpath.display()
+    );
+
     match Mount::builder().flags(flags).mount(&srcpath, mountpath) {
         Ok(m) => Ok(m),
         Err(e) => {
@@ -120,7 +124,11 @@ fn mount_part(part: &str, mountpath: &PathBuf) -> Result<Mount, Error> {
             );
             if srcpath.ends_with(&part_a) {
                 srcpath.set_file_name(&part_b);
-                debug!("Attempting to mount {} to {}", srcpath.display(), mountpath.display());
+                debug!(
+                    "Attempting to mount {} to {}",
+                    srcpath.display(),
+                    mountpath.display()
+                );
                 Mount::builder().flags(flags).mount(&srcpath, mountpath)
             } else {
                 Err(e)
