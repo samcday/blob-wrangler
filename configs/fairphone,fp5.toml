@@ -3,6 +3,7 @@ dynpart = "super"
 firmware = [
     { partition = "vendor", origin = "firmware", destination = "qcom/qcm6490/fairphone5", files = [
             { name = "a660_zap.mdt" },
+            { name = "aw882xx_acf.bin", rename = "aw88261_acf.bin" },
             { name = "vpu20_1v.mdt", rename = "venus.mdt" },
             { name = "yupik_ipa_fws.mdt", rename = "ipa_fws.mdt" },
         ] },
