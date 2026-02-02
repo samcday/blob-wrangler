@@ -11,7 +11,7 @@ need to distribute such firmware and the corresponding legal issues.
 A global `/etc/droid-juicer/config.toml` configuration file can be used
 to set device-independent options. The following options are available:
 
-- `extract_path`: the absolute path to the base firmware destination folder.
+- `general.extract_path`: the absolute path to the base firmware destination folder.
   If this option isn't specified, the value of the `path` parameter of the
   `firmware_class` module will be used. If neither is provided, `droid-juicer`
   will default to `/lib/firmware/updates`.

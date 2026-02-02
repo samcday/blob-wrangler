@@ -34,19 +34,13 @@ struct Config {
     juicer: firmware::Config,
 }
 
-#[derive(Deserialize, Default)]
-struct PostProcessConfig {
-    commands: Vec<String>,
-}
-
 #[derive(Deserialize)]
 #[serde(default)]
-struct MainConfig {
+struct GeneralConfig {
     extract_path: String,
-    postprocess: PostProcessConfig,
 }
 
-impl Default for MainConfig {
+impl Default for GeneralConfig {
     fn default() -> Self {
         let extract_path = match fs::read_to_string("/sys/module/firmware_class/parameters/path") {
             Ok(firmware_class_path) => {
@@ -60,11 +54,21 @@ impl Default for MainConfig {
             Err(_) => DEFAULT_EXTRACT_PATH.to_string(),
         };
 
-        Self {
-            extract_path,
-            postprocess: Default::default(),
-        }
+        Self { extract_path }
     }
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct PostProcessConfig {
+    commands: Vec<String>,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct MainConfig {
+    general: GeneralConfig,
+    postprocess: PostProcessConfig,
 }
 
 fn detect_device() -> Result<String, Error> {
@@ -152,7 +156,7 @@ fn main() -> Result<(), Error> {
 
         let config: Config = toml::from_str(contents.as_str()).unwrap();
         debug!("Extracting firmware for device {device}");
-        let status = firmware::process(config.juicer, &main_config.extract_path)?;
+        let status = firmware::process(config.juicer, &main_config.general.extract_path)?;
         debug!("Writing status file");
         fs::create_dir_all("/var/lib/droid-juicer/")?;
         if let Ok(f) = fs::File::create(STATUS_FILE_PATH) {
