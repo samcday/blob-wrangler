@@ -34,7 +34,7 @@ struct Config {
     juicer: firmware::Config,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq, Debug)]
 #[serde(default)]
 struct GeneralConfig {
     extract_path: String,
@@ -58,13 +58,13 @@ impl Default for GeneralConfig {
     }
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, PartialEq, Debug)]
 #[serde(default)]
 struct PostProcessConfig {
     commands: Vec<String>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, PartialEq, Debug)]
 #[serde(default)]
 struct MainConfig {
     general: GeneralConfig,
@@ -182,4 +182,55 @@ fn main() -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_main_config() {
+        let firmware_class_path =
+            fs::read_to_string("/sys/module/firmware_class/parameters/path").unwrap();
+
+        let expected_config = MainConfig {
+            general: GeneralConfig {
+                extract_path: if firmware_class_path.trim().is_empty() {
+                    DEFAULT_EXTRACT_PATH.to_string()
+                } else {
+                    firmware_class_path.trim().to_string()
+                },
+            },
+            postprocess: PostProcessConfig {
+                commands: Vec::new(),
+            },
+        };
+
+        assert_eq!(toml::from_str::<MainConfig>("").unwrap(), expected_config);
+    }
+
+    #[test]
+    fn custom_main_config() {
+        let config_text = r#"
+            [general]
+            extract_path = "/var/lib/firmware-extract"
+
+            [postprocess]
+            commands = [ "/usr/bin/true" ]
+        "#;
+
+        let expected_config = MainConfig {
+            general: GeneralConfig {
+                extract_path: "/var/lib/firmware-extract".to_string(),
+            },
+            postprocess: PostProcessConfig {
+                commands: vec!["/usr/bin/true".to_string()],
+            },
+        };
+
+        assert_eq!(
+            toml::from_str::<MainConfig>(config_text).unwrap(),
+            expected_config
+        );
+    }
 }
