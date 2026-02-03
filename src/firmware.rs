@@ -33,7 +33,8 @@
  */
 
 use std::io::{Error, ErrorKind, Read, Seek, SeekFrom};
-use std::{fs, os::unix::prelude::FileExt, path::PathBuf};
+use std::{fs, thread};
+use std::{os::unix::prelude::FileExt, path::PathBuf, time::Duration};
 
 use std::io::prelude::*;
 
@@ -236,17 +237,35 @@ pub fn process(config: Config, extract_path: &String) -> Result<Status, Error> {
         info!("Mounting {part} as the 'super' partition");
         let mut success = false;
 
+        /*
+         * Systems using dynparts right from their initial release usually
+         * just have one super partition. On the other hand, systems "converted"
+         * to dynparts during their lifetime will likely have 2 super partitions,
+         * with the possibility that both of them are valid but only one holds
+         * actual filesystems.
+         * Mitigate failure risks by mapping all potential super partitions we
+         * can find.
+         */
         for suffix in ["", "_a", "_b"] {
             let testpart = format!("{part}{suffix}");
             debug!("Attempting to map dynpart {testpart}");
             if map_dynpart(&testpart).is_ok() {
                 success = true;
-                break;
             }
         }
 
         if !success {
             return Err(Error::other("Failed to map super partition!"));
+        } else {
+            // Wait up to 500ms to ensure mapped partitions appear under /dev/mapper
+            for _ in 0..5 {
+                if let Ok(mapped) = fs::read_dir("/dev/mapper") {
+                    if mapped.count() > 1 {
+                        break;
+                    }
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
         }
     }
 
