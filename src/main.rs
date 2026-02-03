@@ -117,7 +117,7 @@ fn main() -> Result<(), Error> {
     };
 
     let main_config = match fs::read_to_string(CONFIG_FILE_PATH) {
-        Ok(contents) => toml::from_str(contents.as_str())?,
+        Ok(contents) => toml::from_str(contents.as_str()).unwrap(),
         Err(_) => MainConfig::default(),
     };
 
