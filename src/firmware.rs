@@ -101,10 +101,21 @@ fn mount_part(part: &str, mountpath: &PathBuf) -> Result<Mount, Error> {
         srcpath.set_file_name(&part_a);
     }
     if !srcpath.exists() {
+        srcpath.set_file_name(&part_b);
+    }
+    if !srcpath.exists() {
         srcpath = PathBuf::from(PARTLABEL_DIR).join(part);
     }
     if !srcpath.exists() {
         srcpath.set_file_name(&part_a);
+    }
+    if !srcpath.exists() {
+        srcpath.set_file_name(&part_b);
+    }
+    if !srcpath.exists() {
+        let err_str = format!("Unable to find device file for partition {part}!");
+        error!("{err_str}");
+        return Err(Error::new(ErrorKind::NotFound, err_str));
     }
 
     debug!(
