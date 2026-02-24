@@ -18,7 +18,7 @@ const CONFIG_DIR_PATH: &str = "/usr/share/droid-juicer/configs";
 const CONFIG_FILE_PATH: &str = "/etc/droid-juicer/config.toml";
 
 #[derive(Parser)]
-#[command(about = "Extract firmware from Android vendor partitions")]
+#[command(version, about = "Extract firmware from Android vendor partitions")]
 struct Opt {
     /// Device type (default: auto-detect)
     #[arg(short, long)]
