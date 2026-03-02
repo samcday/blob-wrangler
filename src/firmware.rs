@@ -108,6 +108,7 @@ pub struct Config {
 pub struct Status {
     pub files: Vec<String>,
     pub folders: Option<Vec<String>>,
+    pub kernel_release: Option<String>,
 }
 
 fn parse_kernel_version(version: &str) -> Option<KernelVersion> {
@@ -575,7 +576,11 @@ pub fn process(
         }
     }
 
-    Ok(Status { files, folders })
+    Ok(Status {
+        files,
+        folders,
+        kernel_release: running_kernel_release.map(str::to_string),
+    })
 }
 
 #[cfg(test)]
