@@ -5,6 +5,7 @@ extern crate pretty_env_logger;
 #[macro_use]
 extern crate log;
 
+use std::collections::HashSet;
 use std::io::{Error, ErrorKind};
 use std::{fs, path::PathBuf};
 
@@ -98,6 +99,51 @@ fn detect_device() -> Result<String, Error> {
     Err(Error::new(ErrorKind::NotFound, "Unable to detect device!"))
 }
 
+fn remove_stale_entries(previous: &firmware::Status, current: &firmware::Status) {
+    let current_files = current
+        .files
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let stale_files = previous
+        .files
+        .iter()
+        .filter(|path| !current_files.contains(path.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if !stale_files.is_empty() {
+        debug!("Removing {} stale firmware files", stale_files.len());
+        if let Err(e) = fs_extra::remove_items(&stale_files) {
+            warn!("Unable to remove stale files: {e}");
+        }
+    }
+
+    let current_folders = current
+        .folders
+        .as_ref()
+        .map(|folders| folders.iter().map(String::as_str).collect::<HashSet<_>>())
+        .unwrap_or_default();
+    let stale_folders = previous
+        .folders
+        .as_ref()
+        .map(|folders| {
+            folders
+                .iter()
+                .filter(|path| !current_folders.contains(path.as_str()))
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    if !stale_folders.is_empty() {
+        debug!("Removing {} stale folders", stale_folders.len());
+        if let Err(e) = fs_extra::remove_items(&stale_folders) {
+            warn!("Unable to remove stale folders: {e}");
+        }
+    }
+}
+
 fn main() -> Result<(), Error> {
     let opt = Opt::parse();
 
@@ -154,6 +200,17 @@ fn main() -> Result<(), Error> {
             _ => "".to_string(),
         };
 
+        let previous_status = match fs::File::open(STATUS_FILE_PATH) {
+            Ok(f) => match serde_json::from_reader(f) {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    warn!("Unable to parse existing status file: {e}");
+                    None
+                }
+            },
+            Err(_) => None,
+        };
+
         let config: Config = toml::from_str(contents.as_str()).unwrap();
         debug!("Extracting firmware for device {device}");
         let status = firmware::process(
@@ -161,6 +218,11 @@ fn main() -> Result<(), Error> {
             &main_config.general.extract_path,
             Some(krel.as_str()),
         )?;
+
+        if let Some(old_status) = previous_status {
+            remove_stale_entries(&old_status, &status);
+        }
+
         debug!("Writing status file");
         fs::create_dir_all("/var/lib/droid-juicer/")?;
         if let Ok(f) = fs::File::create(STATUS_FILE_PATH) {

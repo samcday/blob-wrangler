@@ -1,10 +1,14 @@
 [juicer]
 firmware = [
-    { partition = "vendor", origin = "firmware", destination = "qcom/sdm845/OnePlus/enchilada", files = [
+    { partition = "vendor", origin = "firmware", destination = "qcom/sdm845/oneplus6", kernel = { lt = "7.0" }, files = [
             { name = "a630_zap.mdt" },
             { name = "ipa_fws.mdt" },
         ] },
-    { partition = "modem", origin = "image", destination = "qcom/sdm845/OnePlus/enchilada", files = [
+    { partition = "vendor", origin = "firmware", destination = "qcom/sdm845/OnePlus/enchilada", kernel = { gte = "7.0" }, files = [
+            { name = "a630_zap.mdt" },
+            { name = "ipa_fws.mdt" },
+        ] },
+    { partition = "modem", origin = "image", destination = "qcom/sdm845/oneplus6", kernel = { lt = "7.0" }, files = [
             { name = "adsp.mdt" },
             { name = "adspr.jsn" },
             { name = "adspua.jsn" },
@@ -20,7 +24,26 @@ firmware = [
             { name = "venus.mdt" },
             { name = "wlanmdsp.mbn" },
         ] },
-    { partition = "bluetooth", origin = "image", destination = "qca/OnePlus/enchilada", files = [
+    { partition = "modem", origin = "image", destination = "qcom/sdm845/OnePlus/enchilada", kernel = { gte = "7.0" }, files = [
+            { name = "adsp.mdt" },
+            { name = "adspr.jsn" },
+            { name = "adspua.jsn" },
+            { name = "cdsp.mdt" },
+            { name = "cdspr.jsn" },
+            { name = "mba.mbn" },
+            { name = "modem.mdt" },
+            { name = "modemr.jsn" },
+            { name = "modemuw.jsn" },
+            { name = "slpi.mdt" },
+            { name = "slpir.jsn" },
+            { name = "slpius.jsn" },
+            { name = "venus.mdt" },
+            { name = "wlanmdsp.mbn" },
+        ] },
+    { partition = "bluetooth", origin = "image", destination = "qca/oneplus6", kernel = { lt = "7.0" }, files = [
+            { name = "crnv21.bin" },
+        ] },
+    { partition = "bluetooth", origin = "image", destination = "qca/OnePlus/enchilada", kernel = { gte = "7.0" }, files = [
             { name = "crnv21.bin" },
         ] },
     { partition = "bluetooth", origin = "image", destination = "qca", files = [
