@@ -1,10 +1,10 @@
 [juicer]
 firmware = [
-    { partition = "vendor", origin = "firmware", destination = "qcom/sdm845/oneplus6", files = [
+    { partition = "vendor", origin = "firmware", destination = "qcom/sdm845/OnePlus/enchilada", files = [
             { name = "a630_zap.mdt" },
             { name = "ipa_fws.mdt" },
         ] },
-    { partition = "modem", origin = "image", destination = "qcom/sdm845/oneplus6", files = [
+    { partition = "modem", origin = "image", destination = "qcom/sdm845/OnePlus/enchilada", files = [
             { name = "adsp.mdt" },
             { name = "adspr.jsn" },
             { name = "adspua.jsn" },
@@ -20,7 +20,7 @@ firmware = [
             { name = "venus.mdt" },
             { name = "wlanmdsp.mbn" },
         ] },
-    { partition = "bluetooth", origin = "image", destination = "qca/oneplus6", files = [
+    { partition = "bluetooth", origin = "image", destination = "qca/OnePlus/enchilada", files = [
             { name = "crnv21.bin" },
         ] },
     { partition = "bluetooth", origin = "image", destination = "qca", files = [
