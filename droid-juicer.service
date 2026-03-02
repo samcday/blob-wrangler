@@ -3,14 +3,12 @@ Description=Android vendor firmware extraction
 Wants=sysinit.target
 After=-.mount tmp.mount boot.mount
 Before=plymouth-quit.service display-manager.service
-ConditionPathExists=!/var/lib/droid-juicer/status.json
 
 [Service]
 Type=oneshot
 Environment=RUST_LOG=debug
 ExecStartPre=-/usr/bin/plymouth display-message --text="Extracting binary firmware..."
 ExecStart=/usr/bin/droid-juicer
-ExecStartPost=/usr/sbin/reboot
 
 [Install]
 WantedBy=basic.target

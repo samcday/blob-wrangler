@@ -82,15 +82,13 @@ Example configurations can be found in the [configs](configs) folder.
 
 ## Usage
 
-`droid-juicer` is started during the device's first boot by a systemd
-service. It copies the firmware files according to the corresponding
-configuration file, then updates the initramfs and the Android boot
-image so extracted firmware are available on subsequent boots. Finally,
-it reboots the device.
+`droid-juicer` can be started by a systemd service or executed manually
+as `root`. It copies firmware files according to the corresponding
+configuration file, then updates the status file used for cleanup.
+Subsequent runs reconcile existing data and remove stale extracted files.
 
-`droid-juicer` can also be executed manually (as `root`). In such
-cases, it is however recommended to first run `droid-juicer --cleanup`
-so the existing files and diversions are removed before the new run.
+`droid-juicer --cleanup` can be used to remove all previously extracted
+files and folders recorded in the status file.
 
 ## License
 
