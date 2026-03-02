@@ -49,6 +49,22 @@ const FLAGS_READ_MASK: u32 = 0x07000000;
 const FLAGS_MDT_VALUE: u32 = 0x02000000;
 const PARTLABEL_DIR: &str = "/dev/disk/by-partlabel";
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct KernelVersion {
+    major: u32,
+    minor: u32,
+    patch: u32,
+}
+
+#[derive(Deserialize)]
+pub struct KernelConstraint {
+    lt: Option<String>,
+    lte: Option<String>,
+    gt: Option<String>,
+    gte: Option<String>,
+    eq: Option<String>,
+}
+
 #[derive(Deserialize)]
 pub struct FwFile {
     name: String,
@@ -60,6 +76,7 @@ pub struct FwConfig {
     partition: String,
     origin: String,
     destination: String,
+    kernel: Option<KernelConstraint>,
     files: Vec<FwFile>,
 }
 
@@ -67,6 +84,7 @@ pub struct FwConfig {
 pub struct FwFolder {
     partition: String,
     destination: String,
+    kernel: Option<KernelConstraint>,
     folders: Vec<FwFile>,
 }
 
@@ -74,6 +92,7 @@ pub struct FwFolder {
 pub struct DumpConfig {
     partition: String,
     destination: String,
+    kernel: Option<KernelConstraint>,
     filename: String,
 }
 
@@ -89,6 +108,98 @@ pub struct Config {
 pub struct Status {
     pub files: Vec<String>,
     pub folders: Option<Vec<String>>,
+}
+
+fn parse_kernel_version(version: &str) -> Option<KernelVersion> {
+    let prefix = version
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect::<String>();
+
+    if prefix.is_empty() {
+        return None;
+    }
+
+    let mut parts = prefix.split('.').filter(|p| !p.is_empty());
+    let major = parts.next()?.parse::<u32>().ok()?;
+    let minor = parts.next().unwrap_or("0").parse::<u32>().ok().unwrap_or(0);
+    let patch = parts.next().unwrap_or("0").parse::<u32>().ok().unwrap_or(0);
+
+    Some(KernelVersion {
+        major,
+        minor,
+        patch,
+    })
+}
+
+fn kernel_filter_match(
+    filter: &Option<KernelConstraint>,
+    running_kernel: Option<&KernelVersion>,
+    entry_type: &str,
+    partition: &str,
+) -> bool {
+    let Some(filter) = filter else {
+        return true;
+    };
+
+    let Some(running_kernel) = running_kernel else {
+        warn!(
+            "Unable to parse running kernel release, processing {entry_type} entry on partition {} without kernel filtering",
+            partition
+        );
+        return true;
+    };
+
+    let parse_condition = |condition: &str, value: &str| {
+        let parsed = parse_kernel_version(value);
+        if parsed.is_none() {
+            warn!(
+                "Ignoring invalid kernel filter '{}' = '{}' for {} entry on partition {}",
+                condition, value, entry_type, partition
+            );
+        }
+        parsed
+    };
+
+    if let Some(lt) = filter.lt.as_deref().and_then(|v| parse_condition("lt", v)) {
+        if *running_kernel >= lt {
+            return false;
+        }
+    }
+
+    if let Some(lte) = filter
+        .lte
+        .as_deref()
+        .and_then(|v| parse_condition("lte", v))
+    {
+        if *running_kernel > lte {
+            return false;
+        }
+    }
+
+    if let Some(gt) = filter.gt.as_deref().and_then(|v| parse_condition("gt", v)) {
+        if *running_kernel <= gt {
+            return false;
+        }
+    }
+
+    if let Some(gte) = filter
+        .gte
+        .as_deref()
+        .and_then(|v| parse_condition("gte", v))
+    {
+        if *running_kernel < gte {
+            return false;
+        }
+    }
+
+    if let Some(eq) = filter.eq.as_deref().and_then(|v| parse_condition("eq", v)) {
+        if *running_kernel != eq {
+            return false;
+        }
+    }
+
+    true
 }
 
 fn mount_part(part: &str, mountpath: &PathBuf) -> Result<Mount, Error> {
@@ -228,9 +339,18 @@ fn map_dynpart(part: &str) -> Result<(), Error> {
     }
 }
 
-pub fn process(config: Config, extract_path: &String) -> Result<Status, Error> {
+pub fn process(
+    config: Config,
+    extract_path: &String,
+    running_kernel_release: Option<&str>,
+) -> Result<Status, Error> {
     let mut files: Vec<String> = Vec::new();
     let mut folders: Option<Vec<String>> = None;
+    let running_kernel = running_kernel_release.and_then(parse_kernel_version);
+
+    if running_kernel_release.is_some() && running_kernel.is_none() {
+        warn!("Unable to parse running kernel release, kernel filtering disabled");
+    }
 
     // Map the "super" partition if we expect one
     if let Some(part) = config.dynpart {
@@ -270,6 +390,15 @@ pub fn process(config: Config, extract_path: &String) -> Result<Status, Error> {
     }
 
     for entry in config.firmware {
+        if !kernel_filter_match(
+            &entry.kernel,
+            running_kernel.as_ref(),
+            "firmware",
+            &entry.partition,
+        ) {
+            continue;
+        }
+
         let destpath = PathBuf::from(extract_path).join(entry.destination);
 
         if let Err(e) = fs::create_dir_all(&destpath) {
@@ -339,6 +468,15 @@ pub fn process(config: Config, extract_path: &String) -> Result<Status, Error> {
         let mut folder_list = Vec::new();
 
         for entry in dirs {
+            if !kernel_filter_match(
+                &entry.kernel,
+                running_kernel.as_ref(),
+                "folder",
+                &entry.partition,
+            ) {
+                continue;
+            }
+
             let destpath = PathBuf::from(entry.destination);
 
             if let Err(e) = fs::create_dir_all(&destpath) {
@@ -400,6 +538,15 @@ pub fn process(config: Config, extract_path: &String) -> Result<Status, Error> {
 
     if let Some(dumps) = config.partdump {
         for entry in dumps {
+            if !kernel_filter_match(
+                &entry.kernel,
+                running_kernel.as_ref(),
+                "partdump",
+                &entry.partition,
+            ) {
+                continue;
+            }
+
             debug!(
                 "Processing partition {} for raw dump",
                 entry.partition.as_str()
@@ -429,4 +576,61 @@ pub fn process(config: Config, extract_path: &String) -> Result<Status, Error> {
     }
 
     Ok(Status { files, folders })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_kernel_release() {
+        assert_eq!(
+            parse_kernel_version("6.12.58-1.1+sam1"),
+            Some(KernelVersion {
+                major: 6,
+                minor: 12,
+                patch: 58,
+            })
+        );
+        assert_eq!(
+            parse_kernel_version("7.0.0-rc1"),
+            Some(KernelVersion {
+                major: 7,
+                minor: 0,
+                patch: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn kernel_filter_range_matching() {
+        let running = parse_kernel_version("6.17.0").unwrap();
+        let old_path_filter = Some(KernelConstraint {
+            lt: Some("7.0".to_string()),
+            lte: None,
+            gt: None,
+            gte: None,
+            eq: None,
+        });
+        let new_path_filter = Some(KernelConstraint {
+            lt: None,
+            lte: None,
+            gt: None,
+            gte: Some("7.0".to_string()),
+            eq: None,
+        });
+
+        assert!(kernel_filter_match(
+            &old_path_filter,
+            Some(&running),
+            "firmware",
+            "modem"
+        ));
+        assert!(!kernel_filter_match(
+            &new_path_filter,
+            Some(&running),
+            "firmware",
+            "modem"
+        ));
+    }
 }

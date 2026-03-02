@@ -156,7 +156,11 @@ fn main() -> Result<(), Error> {
 
         let config: Config = toml::from_str(contents.as_str()).unwrap();
         debug!("Extracting firmware for device {device}");
-        let status = firmware::process(config.juicer, &main_config.general.extract_path)?;
+        let status = firmware::process(
+            config.juicer,
+            &main_config.general.extract_path,
+            Some(krel.as_str()),
+        )?;
         debug!("Writing status file");
         fs::create_dir_all("/var/lib/droid-juicer/")?;
         if let Ok(f) = fs::File::create(STATUS_FILE_PATH) {

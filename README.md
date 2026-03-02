@@ -45,6 +45,11 @@ The config files contain a single section named `juicer` with a mandatory
 * `destination`: the base extraction directory subfolder under which the
   firmware files must be copied; this folder will be created if it
   doesn't exist
+* `kernel` (optional): an object used to conditionally process the entry
+  based on the running kernel release. Supported keys are `lt`, `lte`,
+  `gt`, `gte` and `eq`; each expects a version string such as `"7.0"`.
+  Conditions are combined with a logical AND and matched against the
+  numeric prefix of `uname -r`.
 * `files`: those are the firmware files to be copied by `droid-juicer`,
   stored as simple objects with the following attributes:
   * `name`: original file name
