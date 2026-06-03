@@ -79,19 +79,17 @@ fn detect_device() -> Result<String, Error> {
 
     debug!("Device compatible values: {compatibles:#?}");
 
-    while let Ok(entry) = fs::read_dir(CONFIG_DIR_PATH) {
-        for file in entry {
-            let fname = match file {
-                Ok(dirent) => dirent.file_name(),
-                _ => continue,
-            };
-            debug!("Checking config file {}", fname.to_str().unwrap());
-            for value in compatibles.clone() {
-                let full_name = String::from(value) + ".toml";
-                if fname == full_name.as_str() {
-                    debug!("Matched config file for compatible {value}");
-                    return Ok(value.to_string());
-                }
+    for file in fs::read_dir(CONFIG_DIR_PATH)? {
+        let fname = match file {
+            Ok(dirent) => dirent.file_name(),
+            _ => continue,
+        };
+        debug!("Checking config file {}", fname.to_str().unwrap());
+        for value in compatibles.clone() {
+            let full_name = String::from(value) + ".toml";
+            if fname == full_name.as_str() {
+                debug!("Matched config file for compatible {value}");
+                return Ok(value.to_string());
             }
         }
     }
