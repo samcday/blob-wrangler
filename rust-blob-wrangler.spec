@@ -59,6 +59,7 @@ Requires:       kmod
 %{_datadir}/blob-wrangler/configs
 %dir %{_sysconfdir}/blob-wrangler
 %dir %{_sharedstatedir}/blob-wrangler
+%dir %{_sharedstatedir}/blob-wrangler/mounts
 
 %prep
 %autosetup -n %{crate}-%{version} -p1
@@ -77,7 +78,7 @@ Requires:       kmod
 install -Dpm0644 blob-wrangler.service %{buildroot}%{_unitdir}/blob-wrangler.service
 install -dm0755 %{buildroot}%{_datadir}/blob-wrangler/configs
 install -pm0644 configs/*.toml %{buildroot}%{_datadir}/blob-wrangler/configs/
-install -dm0755 %{buildroot}%{_sysconfdir}/blob-wrangler %{buildroot}%{_sharedstatedir}/blob-wrangler
+install -dm0755 %{buildroot}%{_sysconfdir}/blob-wrangler %{buildroot}%{_sharedstatedir}/blob-wrangler/mounts
 
 %if %{with check}
 %check
