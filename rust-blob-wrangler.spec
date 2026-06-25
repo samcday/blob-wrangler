@@ -16,7 +16,6 @@ URL:            https://crates.io/crates/blob-wrangler
 Source:         %{crates_source}
 
 BuildRequires:  cargo-rpm-macros >= 26
-BuildRequires:  clang-devel
 BuildRequires:  systemd-rpm-macros
 
 %global _description %{expand:

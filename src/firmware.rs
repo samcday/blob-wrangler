@@ -41,8 +41,8 @@ use std::io::prelude::*;
 
 use fs_extra::dir;
 use goblin::elf::Elf;
+use nix::mount::{MntFlags, MsFlags, mount, umount2};
 use serde::{Deserialize, Serialize};
-use sys_mount::{Mount, MountFlags, Unmount, UnmountFlags};
 
 use crate::utils;
 
@@ -50,21 +50,25 @@ const FLAGS_READ_MASK: u32 = 0x07000000;
 const FLAGS_MDT_VALUE: u32 = 0x02000000;
 const PARTLABEL_DIR: &str = "/dev/disk/by-partlabel";
 const MOUNTINFO_PATH: &str = "/proc/self/mountinfo";
+const MOUNT_FILESYSTEM_TYPES: &[&str] = &["ext4", "erofs", "f2fs", "vfat", "exfat"];
 
 struct MountedPartition {
     path: PathBuf,
-    mount: Option<Mount>,
+    temporary: bool,
 }
 
 impl MountedPartition {
     fn existing(path: PathBuf) -> Self {
-        Self { path, mount: None }
-    }
-
-    fn temporary(path: PathBuf, mount: Mount) -> Self {
         Self {
             path,
-            mount: Some(mount),
+            temporary: false,
+        }
+    }
+
+    fn temporary(path: PathBuf) -> Self {
+        Self {
+            path,
+            temporary: true,
         }
     }
 
@@ -73,8 +77,8 @@ impl MountedPartition {
     }
 
     fn cleanup(self) {
-        if let Some(mount) = self.mount {
-            let _res = mount.unmount(UnmountFlags::empty());
+        if self.temporary {
+            let _res = umount2(&self.path, MntFlags::empty());
             let _r = fs::remove_dir(self.path);
         }
     }
@@ -304,7 +308,7 @@ fn mounted_partition(srcpath: &Path) -> Option<MountedPartition> {
 fn mount_srcpath(
     srcpath: &Path,
     mountpath: &Path,
-    flags: MountFlags,
+    flags: MsFlags,
 ) -> Result<MountedPartition, Error> {
     if let Some(mounted) = mounted_partition(srcpath) {
         return Ok(mounted);
@@ -312,32 +316,56 @@ fn mount_srcpath(
 
     let _res = fs::DirBuilder::new().recursive(true).create(mountpath);
 
-    debug!(
-        "Attempting to mount {} to {}",
-        srcpath.display(),
-        mountpath.display()
-    );
+    let mut last_error = None;
+    for fstype in MOUNT_FILESYSTEM_TYPES {
+        debug!(
+            "Attempting to mount {} to {} as {}",
+            srcpath.display(),
+            mountpath.display(),
+            fstype
+        );
 
-    match Mount::builder().flags(flags).mount(srcpath, mountpath) {
-        Ok(m) => Ok(MountedPartition::temporary(mountpath.to_path_buf(), m)),
-        Err(e) => {
+        match mount(Some(srcpath), mountpath, Some(*fstype), flags, None::<&str>) {
+            Ok(()) => return Ok(MountedPartition::temporary(mountpath.to_path_buf())),
+            Err(e) => {
+                let error = Error::from(e);
+                debug!(
+                    "Unable to mount {} on {} as {}: {}",
+                    srcpath.display(),
+                    mountpath.display(),
+                    fstype,
+                    error
+                );
+
+                last_error = Some(error);
+            }
+        }
+
+        if let Some(mounted) = mounted_partition(srcpath) {
+            return Ok(mounted);
+        }
+    }
+
+    match last_error {
+        Some(e) => {
             if let Some(mounted) = mounted_partition(srcpath) {
                 return Ok(mounted);
             }
 
             error!(
-                "Unable to mount {} on {}: {}",
+                "Unable to mount {} on {} as any supported filesystem: {}",
                 srcpath.display(),
                 mountpath.display(),
                 e
             );
             Err(e)
         }
+        None => Err(Error::other("No supported filesystems configured")),
     }
 }
 
 fn mount_part(part: &str, mountpath: &Path) -> Result<MountedPartition, Error> {
-    let flags = MountFlags::RDONLY;
+    let flags = MsFlags::MS_RDONLY;
     let part_a = format!("{part}_a");
     let part_b = format!("{part}_b");
 
