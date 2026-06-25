@@ -1,2 +1,5 @@
 /target
 .cargo/
+*.rpm
+*.crate
+*.log

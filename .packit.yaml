@@ -1,0 +1,39 @@
+# https://packit.dev/docs/configuration/
+specfile_path: rust-blob-wrangler.spec
+files_to_sync:
+  - rust-blob-wrangler.spec
+  - .packit.yaml
+upstream_package_name: blob-wrangler
+downstream_package_name: rust-blob-wrangler
+srpm_build_deps:
+  - cargo
+
+actions:
+  # Build the same crate archive shape that rust2rpm expects, but from the
+  # checked-out commit so PR and nightly builds don't depend on crates.io.
+  create-archive:
+    - cargo package --locked --allow-dirty --no-verify
+    - bash -c "ls -1 target/package/blob-wrangler-*.crate"
+
+jobs:
+  - job: copr_build
+    manual_trigger: true
+    trigger: pull_request
+    targets: &fedora_targets
+      - fedora-stable
+      - fedora-stable-aarch64
+      - fedora-rawhide
+      - fedora-rawhide-aarch64
+
+  - job: copr_build
+    trigger: commit
+    branch: main
+    owner: samcday
+    project: blob-wrangler-nightly
+    targets: *fedora_targets
+
+  - job: copr_build
+    trigger: release
+    owner: samcday
+    project: blob-wrangler
+    targets: *fedora_targets
