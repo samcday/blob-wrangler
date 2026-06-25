@@ -1,4 +1,4 @@
-[juicer]
+[wrangler]
 firmware = [
     { partition = "vendor", origin = "firmware", destination = "qcom/sdm845/pixel3", files = [
             { name = "a630_zap.mdt" },

@@ -1,4 +1,4 @@
-[juicer]
+[wrangler]
 dynpart = "system"
 firmware = [
     { partition = "vendor", origin = "firmware", destination = "qcom/sdm670/sargo", files = [
@@ -29,12 +29,12 @@ firmware = [
         ] },
 ]
 folders = [
-    { partition = "vendor", destination = "/var/lib/droid-juicer/sensors", folders = [
+    { partition = "vendor", destination = "/var/lib/blob-wrangler/sensors", folders = [
         { name = "dsp" },
         { name = "etc/acdbdata", rename = "acdb" },
         { name = "etc/sensors" },
     ] },
-    { partition = "persist", destination = "/var/lib/droid-juicer/sensors/sensors", folders = [
+    { partition = "persist", destination = "/var/lib/blob-wrangler/sensors/sensors", folders = [
         { name = "sensors/registry/registry" },
     ] },
 ]

@@ -1,6 +1,6 @@
 [package]
-name = "droid-juicer"
-homepage = "https://gitlab.com/mobian1/droid-juicer"
+name = "blob-wrangler"
+homepage = "https://github.com/samcday/blob-wrangler"
 description = "Extract firmware from Android vendor partitions"
 authors = [ "Arnaud Ferraris <aferraris@debian.org>" ]
 version = "0.4.2"

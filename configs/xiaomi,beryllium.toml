@@ -1,4 +1,4 @@
-[juicer]
+[wrangler]
 firmware = [
     { partition = "vendor", origin = "firmware", destination = "qcom/sdm845/beryllium", files = [
             { name = "a630_zap.mdt" },
@@ -31,16 +31,16 @@ firmware = [
         ] },
 ]
 folders = [
-    { partition = "vendor", destination = "/var/lib/droid-juicer/sensors", folders = [
+    { partition = "vendor", destination = "/var/lib/blob-wrangler/sensors", folders = [
         { name = "etc/acdbdata", rename = "acdb" },
         { name = "etc/sensors" },
     ] },
-    { partition = "dsp", destination = "/var/lib/droid-juicer/sensors/dsp", folders = [
+    { partition = "dsp", destination = "/var/lib/blob-wrangler/sensors/dsp", folders = [
         { name = "adsp" },
         { name = "cdsp" },
         { name = "sdsp" },
     ] },
-    { partition = "persist", destination = "/var/lib/droid-juicer/sensors", folders = [
+    { partition = "persist", destination = "/var/lib/blob-wrangler/sensors", folders = [
         { name = "sensors" },
     ] },
 ]

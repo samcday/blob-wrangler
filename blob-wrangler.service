@@ -1,6 +1,6 @@
 [Unit]
 Description=Android vendor firmware extraction
-ConditionKernelCommandLine=!droid-juicer.skip
+ConditionKernelCommandLine=!blob-wrangler.skip
 Wants=sysinit.target
 Wants=modprobe@ext4.service modprobe@erofs.service modprobe@f2fs.service modprobe@vfat.service modprobe@exfat.service
 After=-.mount tmp.mount boot.mount
@@ -12,7 +12,7 @@ Type=oneshot
 RemainAfterExit=yes
 Environment=RUST_LOG=debug
 ExecStartPre=-/usr/bin/plymouth display-message --text="Extracting binary firmware..."
-ExecStart=/usr/bin/droid-juicer
+ExecStart=/usr/bin/blob-wrangler
 
 [Install]
 WantedBy=basic.target

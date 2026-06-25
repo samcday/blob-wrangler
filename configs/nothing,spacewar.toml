@@ -1,4 +1,4 @@
-[juicer]
+[wrangler]
 dynpart = "super"
 firmware = [
     { partition = "vendor", origin = "firmware", destination = "qcom", files = [
@@ -26,4 +26,3 @@ firmware = [
             { name = "msnv11.bin" },
         ] },
 ]
-

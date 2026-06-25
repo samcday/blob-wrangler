@@ -13,8 +13,8 @@ start_pre() {
 }
 
 start() {
-  if [ ! -f /var/lib/droid-juicer/status.json ]; then
-    /usr/bin/droid-juicer
+  if [ ! -f /var/lib/blob-wrangler/status.json ]; then
+    /usr/bin/blob-wrangler
     /sbin/reboot
   fi
 }
@@ -22,4 +22,3 @@ start() {
 stop() {
   return 0
 }
-

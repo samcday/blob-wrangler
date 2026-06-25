@@ -1,4 +1,4 @@
-[juicer]
+[wrangler]
 firmware = []
 partdump = [
     { partition = "waveform", destination = "rockchip", filename = "ebc.wbf" },

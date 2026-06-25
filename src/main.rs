@@ -14,9 +14,9 @@ use serde::Deserialize;
 
 const DEFAULT_EXTRACT_PATH: &str = "/lib/firmware/updates";
 
-const STATUS_FILE_PATH: &str = "/var/lib/droid-juicer/status.json";
-const CONFIG_DIR_PATH: &str = "/usr/share/droid-juicer/configs";
-const CONFIG_FILE_PATH: &str = "/etc/droid-juicer/config.toml";
+const STATUS_FILE_PATH: &str = "/var/lib/blob-wrangler/status.json";
+const CONFIG_DIR_PATH: &str = "/usr/share/blob-wrangler/configs";
+const CONFIG_FILE_PATH: &str = "/etc/blob-wrangler/config.toml";
 
 #[derive(Parser)]
 #[command(version, about = "Extract firmware from Android vendor partitions")]
@@ -32,7 +32,7 @@ struct Opt {
 
 #[derive(Deserialize)]
 struct Config {
-    juicer: firmware::Config,
+    wrangler: firmware::Config,
 }
 
 #[derive(Deserialize, PartialEq, Debug)]
@@ -212,7 +212,7 @@ fn main() -> Result<(), Error> {
         let config: Config = toml::from_str(contents.as_str()).unwrap();
         debug!("Extracting firmware for device {device}");
         let status = firmware::process(
-            config.juicer,
+            config.wrangler,
             &main_config.general.extract_path,
             Some(krel.as_str()),
         )?;
@@ -222,7 +222,7 @@ fn main() -> Result<(), Error> {
         }
 
         debug!("Writing status file");
-        fs::create_dir_all("/var/lib/droid-juicer/")?;
+        fs::create_dir_all("/var/lib/blob-wrangler/")?;
         if let Ok(f) = fs::File::create(STATUS_FILE_PATH) {
             if let Err(e) = serde_json::to_writer_pretty(f, &status) {
                 return Err(Error::other(e));

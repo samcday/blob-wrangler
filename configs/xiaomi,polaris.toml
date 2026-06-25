@@ -1,4 +1,4 @@
-[juicer]
+[wrangler]
 firmware = [
     { partition = "vendor", origin = "firmware", destination = "qcom/sdm845/polaris", files = [
             { name = "a630_zap.mdt" },

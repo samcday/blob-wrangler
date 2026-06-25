@@ -1,4 +1,4 @@
-[juicer]
+[wrangler]
 firmware = [
     { partition = "vendor", origin = "firmware", destination = "qcom/sm7150/xiaomi/davinci", files = [
             { name = "a615_zap.mdt" },

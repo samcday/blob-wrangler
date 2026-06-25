@@ -1,4 +1,4 @@
-[juicer]
+[wrangler]
 firmware = [
     { partition = "apnhlos", origin = "image", destination = "qcom/sdm845/starqltechn", files = [
             { name = "a630_zap.mdt" },
@@ -20,4 +20,3 @@ firmware = [
             { name = "modemuw.jsn" },
         ] },
 ]
-
