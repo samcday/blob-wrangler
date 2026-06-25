@@ -1,0 +1,38 @@
+[package]
+cargo-install-lib = false
+license-files = ["LICENSE", "LICENSE.BSD-3-Clause"]
+doc-files = ["README.md", "configs/README.md"]
+extra-files = [
+    "%{_unitdir}/blob-wrangler.service",
+    "%dir %{_datadir}/blob-wrangler",
+    "%{_datadir}/blob-wrangler/configs",
+    "%dir %{_sysconfdir}/blob-wrangler",
+    "%dir %{_sharedstatedir}/blob-wrangler",
+]
+bin-package-extra = """
+%{?systemd_ordering}
+Requires:       kmod
+
+%post
+%systemd_post blob-wrangler.service
+
+%preun
+%systemd_preun blob-wrangler.service
+
+%postun
+%systemd_postun_with_restart blob-wrangler.service
+"""
+
+[requires]
+build = [
+    "clang-devel",
+    "systemd-rpm-macros",
+]
+
+[scripts.install]
+post = [
+    "install -Dpm0644 blob-wrangler.service %{buildroot}%{_unitdir}/blob-wrangler.service",
+    "install -dm0755 %{buildroot}%{_datadir}/blob-wrangler/configs",
+    "install -pm0644 configs/*.toml %{buildroot}%{_datadir}/blob-wrangler/configs/",
+    "install -dm0755 %{buildroot}%{_sysconfdir}/blob-wrangler %{buildroot}%{_sharedstatedir}/blob-wrangler",
+]
