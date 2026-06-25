@@ -2,8 +2,8 @@
 name = "blob-wrangler"
 homepage = "https://github.com/samcday/blob-wrangler"
 description = "Extract firmware from Android vendor partitions"
-authors = [ "Arnaud Ferraris <aferraris@debian.org>" ]
-version = "0.4.2"
+authors = [ "Sam Day <me@samcday.com>" ]
+version = "0.0.1"
 license = "MIT"
 edition = "2021"
 
