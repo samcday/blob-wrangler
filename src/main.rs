@@ -178,9 +178,10 @@ fn main() -> Result<(), Error> {
                 warn!("Unable to remove files: {e}");
             }
             if let Some(folders) = status.folders
-                && let Err(e) = fs_extra::remove_items(&folders) {
-                    warn!("Unable to remove folders: {e}");
-                }
+                && let Err(e) = fs_extra::remove_items(&folders)
+            {
+                warn!("Unable to remove folders: {e}");
+            }
             if let Err(e) = fs::remove_file(STATUS_FILE_PATH) {
                 warn!("Unable to remove {STATUS_FILE_PATH}: {e}");
             }
@@ -223,9 +224,10 @@ fn main() -> Result<(), Error> {
         debug!("Writing status file");
         fs::create_dir_all("/var/lib/blob-wrangler/")?;
         if let Ok(f) = fs::File::create(STATUS_FILE_PATH)
-            && let Err(e) = serde_json::to_writer_pretty(f, &status) {
-                return Err(Error::other(e));
-            }
+            && let Err(e) = serde_json::to_writer_pretty(f, &status)
+        {
+            return Err(Error::other(e));
+        }
     }
 
     for cmdline in main_config.postprocess.commands {

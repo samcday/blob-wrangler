@@ -194,35 +194,40 @@ fn kernel_filter_match(
     };
 
     if let Some(lt) = filter.lt.as_deref().and_then(|v| parse_condition("lt", v))
-        && *running_kernel >= lt {
-            return false;
-        }
+        && *running_kernel >= lt
+    {
+        return false;
+    }
 
     if let Some(lte) = filter
         .lte
         .as_deref()
         .and_then(|v| parse_condition("lte", v))
-        && *running_kernel > lte {
-            return false;
-        }
+        && *running_kernel > lte
+    {
+        return false;
+    }
 
     if let Some(gt) = filter.gt.as_deref().and_then(|v| parse_condition("gt", v))
-        && *running_kernel <= gt {
-            return false;
-        }
+        && *running_kernel <= gt
+    {
+        return false;
+    }
 
     if let Some(gte) = filter
         .gte
         .as_deref()
         .and_then(|v| parse_condition("gte", v))
-        && *running_kernel < gte {
-            return false;
-        }
+        && *running_kernel < gte
+    {
+        return false;
+    }
 
     if let Some(eq) = filter.eq.as_deref().and_then(|v| parse_condition("eq", v))
-        && *running_kernel != eq {
-            return false;
-        }
+        && *running_kernel != eq
+    {
+        return false;
+    }
 
     true
 }
@@ -491,9 +496,10 @@ pub fn process(
             // Wait up to 500ms to ensure mapped partitions appear under /dev/mapper
             for _ in 0..5 {
                 if let Ok(mapped) = fs::read_dir("/dev/mapper")
-                    && mapped.count() > 1 {
-                        break;
-                    }
+                    && mapped.count() > 1
+                {
+                    break;
+                }
                 thread::sleep(Duration::from_millis(100));
             }
         }
