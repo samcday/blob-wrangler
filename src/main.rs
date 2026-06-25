@@ -19,6 +19,7 @@ const DEFAULT_EXTRACT_PATH: &str = "/lib/firmware/updates";
 
 const STATUS_FILE_PATH: &str = "/var/lib/blob-wrangler/status.json";
 const CONFIG_DIR_PATH: &str = "/usr/share/blob-wrangler/configs";
+const MOUNTS_DIR_PATH: &str = "/var/lib/blob-wrangler/mounts";
 const CONFIG_FILE_PATH: &str = "/etc/blob-wrangler/config.toml";
 const KERNEL_RELEASE_PATH: &str = "/proc/sys/kernel/osrelease";
 
@@ -36,6 +37,10 @@ struct Opt {
     /// Directory containing device config files
     #[arg(long, value_name = "DIR", default_value = CONFIG_DIR_PATH)]
     configs_dir: PathBuf,
+
+    /// Directory used for temporary partition mounts
+    #[arg(long, value_name = "DIR", default_value = MOUNTS_DIR_PATH)]
+    mounts_dir: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -222,6 +227,7 @@ fn main() -> Result<(), Error> {
         let status = firmware::process(
             config.wrangler,
             &main_config.general.extract_path,
+            &opt.mounts_dir,
             Some(krel.as_str()),
         )?;
 
@@ -318,5 +324,19 @@ mod tests {
         let opt = Opt::parse_from(["blob-wrangler", "--configs-dir", "/tmp/blob-configs"]);
 
         assert_eq!(opt.configs_dir, PathBuf::from("/tmp/blob-configs"));
+    }
+
+    #[test]
+    fn default_mounts_dir_option() {
+        let opt = Opt::parse_from(["blob-wrangler"]);
+
+        assert_eq!(opt.mounts_dir, PathBuf::from(MOUNTS_DIR_PATH));
+    }
+
+    #[test]
+    fn custom_mounts_dir_option() {
+        let opt = Opt::parse_from(["blob-wrangler", "--mounts-dir", "/run/blob-mounts"]);
+
+        assert_eq!(opt.mounts_dir, PathBuf::from("/run/blob-mounts"));
     }
 }

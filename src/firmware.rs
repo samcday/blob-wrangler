@@ -486,6 +486,7 @@ fn map_dynpart(part: &str) -> Result<(), Error> {
 pub fn process(
     config: Config,
     extract_path: &String,
+    mounts_dir: &Path,
     running_kernel_release: Option<&str>,
 ) -> Result<Status, Error> {
     let mut files: Vec<String> = Vec::new();
@@ -550,7 +551,7 @@ pub fn process(
             continue;
         }
 
-        let mntpath = PathBuf::from("/tmp").join(&entry.partition);
+        let mntpath = mounts_dir.join(&entry.partition);
 
         match mount_part(entry.partition.as_str(), &mntpath) {
             Ok(mounted) => {
@@ -626,7 +627,7 @@ pub fn process(
                 continue;
             }
 
-            let mntpath = PathBuf::from("/tmp").join(&entry.partition);
+            let mntpath = mounts_dir.join(&entry.partition);
 
             match mount_part(entry.partition.as_str(), &mntpath) {
                 Ok(mounted) => {
