@@ -1,5 +1,0 @@
-[postprocess]
-commands = [
-    "/usr/sbin/update-initramfs -u -k %k",
-    "/etc/kernel/postinst.d/zz-qcom-bootimg %k",
-]
