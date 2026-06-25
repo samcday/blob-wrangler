@@ -13,7 +13,7 @@ Summary:        Extract firmware from Android vendor partitions
 
 License:        MIT AND BSD-3-Clause
 URL:            https://crates.io/crates/blob-wrangler
-Source:         %{crates_source}
+Source0:        %{crates_source}
 
 BuildRequires:  cargo-rpm-macros >= 26
 BuildRequires:  systemd-rpm-macros
