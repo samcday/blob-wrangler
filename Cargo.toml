@@ -5,7 +5,7 @@ description = "Extract firmware from Android vendor partitions"
 authors = [ "Sam Day <me@samcday.com>" ]
 version = "0.0.1"
 license = "MIT AND BSD-3-Clause"
-edition = "2021"
+edition = "2024"
 include = [
     "Cargo.lock",
     "Cargo.toml",
