@@ -7,7 +7,10 @@ extern crate log;
 
 use std::collections::HashSet;
 use std::io::{Error, ErrorKind};
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use clap::Parser;
 use serde::Deserialize;
@@ -28,6 +31,10 @@ struct Opt {
     /// Remove previously extracted files
     #[arg(short, long)]
     cleanup: bool,
+
+    /// Directory containing device config files
+    #[arg(long, value_name = "DIR", default_value = CONFIG_DIR_PATH)]
+    configs_dir: PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -72,14 +79,14 @@ struct MainConfig {
     postprocess: PostProcessConfig,
 }
 
-fn detect_device() -> Result<String, Error> {
+fn detect_device(configs_dir: &Path) -> Result<String, Error> {
     let contents = fs::read_to_string("/proc/device-tree/compatible").unwrap_or_default();
 
     let compatibles: Vec<&str> = contents.split('\0').filter(|s| !s.is_empty()).collect();
 
     debug!("Device compatible values: {compatibles:#?}");
 
-    for file in fs::read_dir(CONFIG_DIR_PATH)? {
+    for file in fs::read_dir(configs_dir)? {
         let fname = match file {
             Ok(dirent) => dirent.file_name(),
             _ => continue,
@@ -149,7 +156,7 @@ fn main() -> Result<(), Error> {
 
     let device = match opt.device {
         Some(str) => str,
-        _ => detect_device()?,
+        _ => detect_device(&opt.configs_dir)?,
     };
 
     let krel = match uname::uname() {
@@ -189,7 +196,7 @@ fn main() -> Result<(), Error> {
     } else {
         info!("Starting processing for device {device}");
 
-        let mut cfg_path = PathBuf::from(CONFIG_DIR_PATH);
+        let mut cfg_path = opt.configs_dir.clone();
         cfg_path.push(&device);
         cfg_path.set_extension("toml");
 
@@ -296,5 +303,19 @@ mod tests {
             toml::from_str::<MainConfig>(config_text).unwrap(),
             expected_config
         );
+    }
+
+    #[test]
+    fn default_configs_dir_option() {
+        let opt = Opt::parse_from(["blob-wrangler"]);
+
+        assert_eq!(opt.configs_dir, PathBuf::from(CONFIG_DIR_PATH));
+    }
+
+    #[test]
+    fn custom_configs_dir_option() {
+        let opt = Opt::parse_from(["blob-wrangler", "--configs-dir", "/tmp/blob-configs"]);
+
+        assert_eq!(opt.configs_dir, PathBuf::from("/tmp/blob-configs"));
     }
 }
