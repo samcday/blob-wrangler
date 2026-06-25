@@ -11,7 +11,9 @@ Run `blob-wrangler` on a supported device.
 
 ## License
 
-[MIT][].
+`blob-wrangler` is licensed under `MIT AND BSD-3-Clause`.
+See [LICENSE][] and [LICENSE.BSD-3-Clause][].
 
-[MIT]: https://spdx.org/licenses/MIT.html
+[LICENSE]: LICENSE
+[LICENSE.BSD-3-Clause]: LICENSE.BSD-3-Clause
 [droid-juicer]: https://gitlab.com/mobian1/droid-juicer

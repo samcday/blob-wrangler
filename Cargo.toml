@@ -4,7 +4,7 @@ homepage = "https://github.com/samcday/blob-wrangler"
 description = "Extract firmware from Android vendor partitions"
 authors = [ "Sam Day <me@samcday.com>" ]
 version = "0.0.1"
-license = "MIT"
+license = "MIT AND BSD-3-Clause"
 edition = "2021"
 
 [dependencies]
