@@ -17,6 +17,7 @@ const DEFAULT_EXTRACT_PATH: &str = "/lib/firmware/updates";
 const STATUS_FILE_PATH: &str = "/var/lib/blob-wrangler/status.json";
 const CONFIG_DIR_PATH: &str = "/usr/share/blob-wrangler/configs";
 const CONFIG_FILE_PATH: &str = "/etc/blob-wrangler/config.toml";
+const KERNEL_RELEASE_PATH: &str = "/proc/sys/kernel/osrelease";
 
 #[derive(Parser)]
 #[command(version, about = "Extract firmware from Android vendor partitions")]
@@ -152,8 +153,8 @@ fn main() -> Result<(), Error> {
         _ => detect_device()?,
     };
 
-    let krel = match uname::uname() {
-        Ok(u) => u.release,
+    let krel = match fs::read_to_string(KERNEL_RELEASE_PATH) {
+        Ok(release) => release.trim_end().to_string(),
         _ => {
             warn!("Unable to detect running kernel release!");
             String::from("all")

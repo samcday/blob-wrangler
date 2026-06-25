@@ -25,7 +25,6 @@ Requires:       kmod
 
 [requires]
 build = [
-    "clang-devel",
     "systemd-rpm-macros",
 ]
 
