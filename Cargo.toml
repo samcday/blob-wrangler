@@ -1,6 +1,7 @@
 [package]
 name = "blob-wrangler"
 homepage = "https://github.com/samcday/blob-wrangler"
+repository = "https://github.com/samcday/blob-wrangler"
 description = "Extract firmware from Android vendor partitions"
 authors = [ "Sam Day <me@samcday.com>" ]
 version = "0.0.1"
@@ -11,6 +12,7 @@ include = [
     "Cargo.toml",
     "LICENSE",
     "LICENSE.BSD-3-Clause",
+    "CHANGELOG.md",
     "README.md",
     "blob-wrangler.service",
     "configs/*.toml",
