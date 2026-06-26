@@ -1,0 +1,3 @@
+- Read ./README.md
+- When ending a turn that made changes, suggest a commit title that adheres to Conventional Commit.
+- Ensure all code changes pass `cargo clippy` and `cargo fmt`.
