@@ -12,7 +12,7 @@ Type=oneshot
 RemainAfterExit=yes
 Environment=RUST_LOG=debug
 ExecStartPre=-/usr/bin/plymouth display-message --text="Extracting binary firmware..."
-ExecStart=/usr/bin/blob-wrangler
+ExecStart=/usr/bin/blob-wrangler run
 
 [Install]
 WantedBy=basic.target

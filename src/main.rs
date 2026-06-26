@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use serde::Deserialize;
 
 const DEFAULT_EXTRACT_PATH: &str = "/lib/firmware/updates";
@@ -24,23 +24,38 @@ const CONFIG_FILE_PATH: &str = "/etc/blob-wrangler/config.toml";
 const KERNEL_RELEASE_PATH: &str = "/proc/sys/kernel/osrelease";
 
 #[derive(Parser)]
-#[command(version, about = "Extract firmware from Android vendor partitions")]
+#[command(
+    version,
+    about = "Extract firmware from Android vendor partitions",
+    arg_required_else_help = true
+)]
 struct Opt {
     /// Device type (default: auto-detect)
-    #[arg(short, long)]
+    #[arg(short, long, global = true)]
     device: Option<String>,
 
-    /// Remove previously extracted files
-    #[arg(short, long)]
-    cleanup: bool,
-
     /// Directory containing device config files
-    #[arg(long, value_name = "DIR", default_value = CONFIG_DIR_PATH)]
+    #[arg(long, value_name = "DIR", default_value = CONFIG_DIR_PATH, global = true)]
     configs_dir: PathBuf,
 
     /// Directory used for temporary partition mounts
-    #[arg(long, value_name = "DIR", default_value = MOUNTS_DIR_PATH)]
+    #[arg(long, value_name = "DIR", default_value = MOUNTS_DIR_PATH, global = true)]
     mounts_dir: PathBuf,
+
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Subcommand)]
+enum Command {
+    /// Fetch firmware and install it into the configured firmware path
+    Run,
+
+    /// Report the current firmware extraction status
+    Status,
+
+    /// Remove previously extracted files
+    Remove,
 }
 
 #[derive(Deserialize)]
@@ -155,97 +170,111 @@ fn remove_stale_entries(previous: &firmware::Status, current: &firmware::Status)
     }
 }
 
-fn main() -> Result<(), Error> {
-    let opt = Opt::parse();
+fn detect_selected_device(device: Option<&str>, configs_dir: &Path) -> Result<String, Error> {
+    match device {
+        Some(device) => Ok(device.to_string()),
+        None => detect_device(configs_dir),
+    }
+}
 
-    pretty_env_logger::init();
-
-    let device = match opt.device {
-        Some(str) => str,
-        _ => detect_device(&opt.configs_dir)?,
-    };
-
-    let krel = match fs::read_to_string(KERNEL_RELEASE_PATH) {
+fn running_kernel_release() -> String {
+    match fs::read_to_string(KERNEL_RELEASE_PATH) {
         Ok(release) => release.trim_end().to_string(),
         _ => {
             warn!("Unable to detect running kernel release!");
             String::from("all")
         }
-    };
+    }
+}
 
-    let main_config = match fs::read_to_string(CONFIG_FILE_PATH) {
+fn read_main_config() -> MainConfig {
+    match fs::read_to_string(CONFIG_FILE_PATH) {
         Ok(contents) => toml::from_str(contents.as_str()).unwrap(),
         Err(_) => MainConfig::default(),
+    }
+}
+
+fn run_command(
+    device: &str,
+    configs_dir: &Path,
+    mounts_dir: &Path,
+    krel: &str,
+    main_config: &MainConfig,
+) -> Result<(), Error> {
+    info!("Starting processing for device {device}");
+
+    let mut cfg_path = configs_dir.to_path_buf();
+    cfg_path.push(device);
+    cfg_path.set_extension("toml");
+
+    let contents = match fs::read_to_string(cfg_path) {
+        Ok(str) => str,
+        _ => "".to_string(),
     };
 
-    if opt.cleanup {
-        info!("Cleaning up files for device {device}");
-
-        if let Ok(f) = fs::File::open(STATUS_FILE_PATH) {
-            let status: firmware::Status = match serde_json::from_reader(f) {
-                Ok(s) => s,
-                Err(e) => return Err(Error::other(e)),
-            };
-
-            if let Err(e) = fs_extra::remove_items(&status.files) {
-                warn!("Unable to remove files: {e}");
+    let previous_status = match fs::File::open(STATUS_FILE_PATH) {
+        Ok(f) => match serde_json::from_reader(f) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                warn!("Unable to parse existing status file: {e}");
+                None
             }
-            if let Some(folders) = status.folders
-                && let Err(e) = fs_extra::remove_items(&folders)
-            {
-                warn!("Unable to remove folders: {e}");
-            }
-            if let Err(e) = fs::remove_file(STATUS_FILE_PATH) {
-                warn!("Unable to remove {STATUS_FILE_PATH}: {e}");
-            }
-        }
-    } else {
-        info!("Starting processing for device {device}");
+        },
+        Err(_) => None,
+    };
 
-        let mut cfg_path = opt.configs_dir.clone();
-        cfg_path.push(&device);
-        cfg_path.set_extension("toml");
+    let config: Config = toml::from_str(contents.as_str()).unwrap();
+    debug!("Extracting firmware for device {device}");
+    let status = firmware::process(
+        config.wrangler,
+        &main_config.general.extract_path,
+        mounts_dir,
+        Some(krel),
+    )?;
 
-        let contents = match fs::read_to_string(cfg_path) {
-            Ok(str) => str,
-            _ => "".to_string(),
+    if let Some(old_status) = previous_status {
+        remove_stale_entries(&old_status, &status);
+    }
+
+    debug!("Writing status file");
+    fs::create_dir_all("/var/lib/blob-wrangler/")?;
+    if let Ok(f) = fs::File::create(STATUS_FILE_PATH)
+        && let Err(e) = serde_json::to_writer_pretty(f, &status)
+    {
+        return Err(Error::other(e));
+    }
+
+    Ok(())
+}
+
+fn remove_command(device: &str) -> Result<(), Error> {
+    info!("Cleaning up files for device {device}");
+
+    if let Ok(f) = fs::File::open(STATUS_FILE_PATH) {
+        let status: firmware::Status = match serde_json::from_reader(f) {
+            Ok(s) => s,
+            Err(e) => return Err(Error::other(e)),
         };
 
-        let previous_status = match fs::File::open(STATUS_FILE_PATH) {
-            Ok(f) => match serde_json::from_reader(f) {
-                Ok(s) => Some(s),
-                Err(e) => {
-                    warn!("Unable to parse existing status file: {e}");
-                    None
-                }
-            },
-            Err(_) => None,
-        };
-
-        let config: Config = toml::from_str(contents.as_str()).unwrap();
-        debug!("Extracting firmware for device {device}");
-        let status = firmware::process(
-            config.wrangler,
-            &main_config.general.extract_path,
-            &opt.mounts_dir,
-            Some(krel.as_str()),
-        )?;
-
-        if let Some(old_status) = previous_status {
-            remove_stale_entries(&old_status, &status);
+        if let Err(e) = fs_extra::remove_items(&status.files) {
+            warn!("Unable to remove files: {e}");
         }
-
-        debug!("Writing status file");
-        fs::create_dir_all("/var/lib/blob-wrangler/")?;
-        if let Ok(f) = fs::File::create(STATUS_FILE_PATH)
-            && let Err(e) = serde_json::to_writer_pretty(f, &status)
+        if let Some(folders) = status.folders
+            && let Err(e) = fs_extra::remove_items(&folders)
         {
-            return Err(Error::other(e));
+            warn!("Unable to remove folders: {e}");
+        }
+        if let Err(e) = fs::remove_file(STATUS_FILE_PATH) {
+            warn!("Unable to remove {STATUS_FILE_PATH}: {e}");
         }
     }
 
-    for cmdline in main_config.postprocess.commands {
-        let full_cmd = cmdline.replace("%k", krel.as_str());
+    Ok(())
+}
+
+fn run_postprocess(commands: &[String], krel: &str) -> Result<(), Error> {
+    for cmdline in commands {
+        let full_cmd = cmdline.replace("%k", krel);
         let mut cmd = full_cmd.split(' ').collect::<Vec<_>>();
         if cmd.is_empty() {
             continue;
@@ -257,6 +286,84 @@ fn main() -> Result<(), Error> {
         };
         debug!("Executing post-process command '{full_cmd}'");
         utils::execute(cmd[0], args)?
+    }
+
+    Ok(())
+}
+
+fn paint(value: &str, style: &str) -> String {
+    format!("{style}{value}\x1b[0m")
+}
+
+fn print_status_list(label: &str, items: &[String]) {
+    println!(
+        "{} {}",
+        paint(label, "\x1b[36m"),
+        paint(&items.len().to_string(), "\x1b[32m")
+    );
+
+    for item in items {
+        println!("  {}", item);
+    }
+}
+
+fn status_command() -> Result<(), Error> {
+    let status_file = match fs::File::open(STATUS_FILE_PATH) {
+        Ok(file) => file,
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            println!(
+                "{} no status file found at {}",
+                paint("Status:", "\x1b[33m"),
+                STATUS_FILE_PATH
+            );
+            return Ok(());
+        }
+        Err(e) => return Err(e),
+    };
+
+    let status: firmware::Status = serde_json::from_reader(status_file).map_err(Error::other)?;
+
+    println!("{}", paint("blob-wrangler status", "\x1b[1m"));
+    println!(
+        "{} {}",
+        paint("Kernel release:", "\x1b[36m"),
+        status.kernel_release.as_deref().unwrap_or("unknown")
+    );
+    print_status_list("Files:", &status.files);
+    print_status_list("Folders:", status.folders.as_deref().unwrap_or(&[]));
+
+    Ok(())
+}
+
+fn main() -> Result<(), Error> {
+    let opt = Opt::parse();
+
+    pretty_env_logger::init();
+
+    match opt.command {
+        Command::Run => {
+            let device = detect_selected_device(opt.device.as_deref(), &opt.configs_dir)?;
+            let krel = running_kernel_release();
+            let main_config = read_main_config();
+
+            run_command(
+                &device,
+                &opt.configs_dir,
+                &opt.mounts_dir,
+                &krel,
+                &main_config,
+            )?;
+            run_postprocess(&main_config.postprocess.commands, &krel)?;
+        }
+        Command::Status => status_command()?,
+        Command::Remove => {
+            let device = detect_selected_device(opt.device.as_deref(), &opt.configs_dir)?;
+            let krel = running_kernel_release();
+            let main_config = read_main_config();
+
+            remove_command(&device)?;
+            run_postprocess(&main_config.postprocess.commands, &krel)?;
+        }
     }
 
     Ok(())
@@ -314,29 +421,60 @@ mod tests {
 
     #[test]
     fn default_configs_dir_option() {
-        let opt = Opt::parse_from(["blob-wrangler"]);
+        let opt = Opt::parse_from(["blob-wrangler", "run"]);
 
         assert_eq!(opt.configs_dir, PathBuf::from(CONFIG_DIR_PATH));
     }
 
     #[test]
     fn custom_configs_dir_option() {
-        let opt = Opt::parse_from(["blob-wrangler", "--configs-dir", "/tmp/blob-configs"]);
+        let opt = Opt::parse_from(["blob-wrangler", "run", "--configs-dir", "/tmp/blob-configs"]);
 
         assert_eq!(opt.configs_dir, PathBuf::from("/tmp/blob-configs"));
     }
 
     #[test]
     fn default_mounts_dir_option() {
-        let opt = Opt::parse_from(["blob-wrangler"]);
+        let opt = Opt::parse_from(["blob-wrangler", "run"]);
 
         assert_eq!(opt.mounts_dir, PathBuf::from(MOUNTS_DIR_PATH));
     }
 
     #[test]
     fn custom_mounts_dir_option() {
-        let opt = Opt::parse_from(["blob-wrangler", "--mounts-dir", "/run/blob-mounts"]);
+        let opt = Opt::parse_from([
+            "blob-wrangler",
+            "status",
+            "--mounts-dir",
+            "/run/blob-mounts",
+        ]);
 
         assert_eq!(opt.mounts_dir, PathBuf::from("/run/blob-mounts"));
+    }
+
+    #[test]
+    fn subcommand_required() {
+        assert!(Opt::try_parse_from(["blob-wrangler"]).is_err());
+    }
+
+    #[test]
+    fn parse_run_command() {
+        let opt = Opt::parse_from(["blob-wrangler", "run"]);
+
+        assert_eq!(opt.command, Command::Run);
+    }
+
+    #[test]
+    fn parse_status_command() {
+        let opt = Opt::parse_from(["blob-wrangler", "status"]);
+
+        assert_eq!(opt.command, Command::Status);
+    }
+
+    #[test]
+    fn parse_remove_command() {
+        let opt = Opt::parse_from(["blob-wrangler", "remove"]);
+
+        assert_eq!(opt.command, Command::Remove);
     }
 }
