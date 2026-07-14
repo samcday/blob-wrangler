@@ -1,4 +1,3 @@
-mod firmware;
 mod utils;
 
 extern crate pretty_env_logger;
@@ -10,8 +9,14 @@ use std::io::{Error, ErrorKind};
 use std::{
     fs,
     path::{Path, PathBuf},
+    thread,
+    time::Duration,
 };
 
+use blob_wrangler::{
+    ExtractOptions, PartitionResolver, PartitionStatus, ResolvedPartition, Slot, Status,
+    detect_active_slot, dynpart_paths, extract, parse_config, select_partition_path,
+};
 use clap::Parser;
 use serde::Deserialize;
 
@@ -22,6 +27,8 @@ const CONFIG_DIR_PATH: &str = "/usr/share/blob-wrangler/configs";
 const MOUNTS_DIR_PATH: &str = "/var/lib/blob-wrangler/mounts";
 const CONFIG_FILE_PATH: &str = "/etc/blob-wrangler/config.toml";
 const KERNEL_RELEASE_PATH: &str = "/proc/sys/kernel/osrelease";
+const PARTLABEL_DIR: &str = "/dev/disk/by-partlabel";
+const MAPPER_DIR: &str = "/dev/mapper";
 
 #[derive(Parser)]
 #[command(version, about = "Extract firmware from Android vendor partitions")]
@@ -41,11 +48,6 @@ struct Opt {
     /// Directory used for temporary partition mounts
     #[arg(long, value_name = "DIR", default_value = MOUNTS_DIR_PATH)]
     mounts_dir: PathBuf,
-}
-
-#[derive(Deserialize)]
-struct Config {
-    wrangler: firmware::Config,
 }
 
 #[derive(Deserialize, PartialEq, Debug)]
@@ -97,7 +99,7 @@ fn detect_device(configs_dir: &Path) -> Result<String, Error> {
             Ok(dirent) => dirent.file_name(),
             _ => continue,
         };
-        debug!("Checking config file {}", fname.to_str().unwrap());
+        debug!("Checking config file {}", fname.to_string_lossy());
         for value in compatibles.clone() {
             let full_name = String::from(value) + ".toml";
             if fname == full_name.as_str() {
@@ -110,7 +112,7 @@ fn detect_device(configs_dir: &Path) -> Result<String, Error> {
     Err(Error::new(ErrorKind::NotFound, "Unable to detect device!"))
 }
 
-fn remove_stale_entries(previous: &firmware::Status, current: &firmware::Status) {
+fn remove_stale_entries(previous: &Status, current: &Status) {
     let current_files = current
         .files
         .iter()
@@ -155,6 +157,77 @@ fn remove_stale_entries(previous: &firmware::Status, current: &firmware::Status)
     }
 }
 
+struct SystemPartitionResolver {
+    active_slot: Option<Slot>,
+}
+
+impl PartitionResolver for SystemPartitionResolver {
+    fn resolve(&self, partition: &str) -> Result<Option<ResolvedPartition>, Error> {
+        let srcpath = select_partition_path(
+            partition,
+            self.active_slot,
+            &[Path::new(MAPPER_DIR), Path::new(PARTLABEL_DIR)],
+        )?;
+        Ok(Some(ResolvedPartition::BlockDevice(srcpath)))
+    }
+}
+
+fn map_dynamic_partitions(
+    partition: &str,
+    active_slot: Option<Slot>,
+) -> Result<Vec<PathBuf>, Error> {
+    info!("Mapping {partition} as the dynamic partition container");
+    let paths = dynpart_paths(partition, active_slot, Path::new(PARTLABEL_DIR))?;
+    let mut mapped = Vec::new();
+    let mut last_error = None;
+
+    for path in paths {
+        let candidate = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| Error::new(ErrorKind::InvalidData, "Invalid dynamic partition name"))?;
+
+        debug!("Attempting to map dynamic partition container {candidate}");
+        match utils::execute(
+            "systemctl",
+            Some(vec![
+                "start",
+                &format!("make-dynpart-mappings@{candidate}.service"),
+            ]),
+        ) {
+            Ok(()) => mapped.push(path),
+            Err(error) if active_slot.is_none() => {
+                warn!(
+                    "Unable to map dynamic partition container {}: {error}",
+                    path.display()
+                );
+                last_error = Some(error);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    if mapped.is_empty() {
+        return Err(last_error.unwrap_or_else(|| {
+            Error::other(format!(
+                "Failed to map dynamic partition container {partition}"
+            ))
+        }));
+    }
+
+    // Wait up to 500ms to ensure mapped partitions appear under /dev/mapper.
+    for _ in 0..5 {
+        if let Ok(mapped) = fs::read_dir(MAPPER_DIR)
+            && mapped.count() > 1
+        {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    Ok(mapped)
+}
+
 fn main() -> Result<(), Error> {
     let opt = Opt::parse();
 
@@ -174,7 +247,8 @@ fn main() -> Result<(), Error> {
     };
 
     let main_config = match fs::read_to_string(CONFIG_FILE_PATH) {
-        Ok(contents) => toml::from_str(contents.as_str()).unwrap(),
+        Ok(contents) => toml::from_str(contents.as_str())
+            .map_err(|error| Error::new(ErrorKind::InvalidData, error))?,
         Err(_) => MainConfig::default(),
     };
 
@@ -182,7 +256,7 @@ fn main() -> Result<(), Error> {
         info!("Cleaning up files for device {device}");
 
         if let Ok(f) = fs::File::open(STATUS_FILE_PATH) {
-            let status: firmware::Status = match serde_json::from_reader(f) {
+            let status: Status = match serde_json::from_reader(f) {
                 Ok(s) => s,
                 Err(e) => return Err(Error::other(e)),
             };
@@ -206,10 +280,7 @@ fn main() -> Result<(), Error> {
         cfg_path.push(&device);
         cfg_path.set_extension("toml");
 
-        let contents = match fs::read_to_string(cfg_path) {
-            Ok(str) => str,
-            _ => "".to_string(),
-        };
+        let contents = fs::read_to_string(cfg_path)?;
 
         let previous_status = match fs::File::open(STATUS_FILE_PATH) {
             Ok(f) => match serde_json::from_reader(f) {
@@ -222,16 +293,31 @@ fn main() -> Result<(), Error> {
             Err(_) => None,
         };
 
-        let config: Config = toml::from_str(contents.as_str()).unwrap();
+        let config =
+            parse_config(&contents).map_err(|error| Error::new(ErrorKind::InvalidData, error))?;
+        let active_slot = detect_active_slot()?;
+        let mut dynpart_sources = Vec::new();
+        if let Some(partition) = config.dynpart() {
+            dynpart_sources = map_dynamic_partitions(partition, active_slot)?;
+        }
         debug!("Extracting firmware for device {device}");
-        let active_slot = firmware::detect_active_slot()?;
-        let status = firmware::process(
-            config.wrangler,
-            &main_config.general.extract_path,
-            &opt.mounts_dir,
-            Some(krel.as_str()),
+        let resolver = SystemPartitionResolver { active_slot };
+        let extraction_options = ExtractOptions {
+            extract_path: PathBuf::from(&main_config.general.extract_path),
+            mounts_dir: opt.mounts_dir.clone(),
+            running_kernel_release: Some(krel.clone()),
             active_slot,
-        )?;
+        };
+        let mut report = extract(&config, &resolver, &extraction_options)?;
+        if let Some(partition) = config.dynpart() {
+            for source in &dynpart_sources {
+                report.partitions.push(PartitionStatus {
+                    partition: format!("dynpart:{partition}"),
+                    source: source.display().to_string(),
+                });
+            }
+        }
+        let status = Status::from(&report);
         let has_required_failures = status.has_required_failures();
 
         if !has_required_failures && let Some(old_status) = previous_status {
