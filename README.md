@@ -9,6 +9,9 @@ This project is a hard fork of [droid-juicer][].
 
 Run `blob-wrangler` on a supported device.
 
+Extraction status is written to `/var/lib/blob-wrangler/status.json`, including
+the detected Android slot, selected source partitions, and file failures.
+
 ## License
 
 `blob-wrangler` is licensed under `MIT AND BSD-3-Clause`.

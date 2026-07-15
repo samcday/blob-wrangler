@@ -224,23 +224,39 @@ fn main() -> Result<(), Error> {
 
         let config: Config = toml::from_str(contents.as_str()).unwrap();
         debug!("Extracting firmware for device {device}");
+        let active_slot = firmware::detect_active_slot()?;
         let status = firmware::process(
             config.wrangler,
             &main_config.general.extract_path,
             &opt.mounts_dir,
             Some(krel.as_str()),
+            active_slot,
         )?;
+        let has_required_failures = status.has_required_failures();
 
-        if let Some(old_status) = previous_status {
+        if !has_required_failures && let Some(old_status) = previous_status {
             remove_stale_entries(&old_status, &status);
         }
 
         debug!("Writing status file");
         fs::create_dir_all("/var/lib/blob-wrangler/")?;
-        if let Ok(f) = fs::File::create(STATUS_FILE_PATH)
-            && let Err(e) = serde_json::to_writer_pretty(f, &status)
-        {
-            return Err(Error::other(e));
+        let status_file = fs::File::create(STATUS_FILE_PATH)?;
+        serde_json::to_writer_pretty(status_file, &status).map_err(Error::other)?;
+
+        if has_required_failures {
+            let failed = status
+                .failures
+                .iter()
+                .filter(|failure| failure.required)
+                .map(|failure| failure.source.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Err(Error::new(
+                ErrorKind::NotFound,
+                format!(
+                    "Required firmware extraction failed for: {failed}; details written to {STATUS_FILE_PATH}"
+                ),
+            ));
         }
     }
 

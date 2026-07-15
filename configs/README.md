@@ -23,6 +23,8 @@ The config files contain a single section named `wrangler` with a mandatory
   stored as simple objects with the following attributes:
   * `name`: original file name
   * `rename` (optional): name to rename the file to
+  * `required` (optional, default `false`): fail the extraction service after
+    writing status diagnostics if this file is missing or cannot be copied.
 
 An optional `folders` key can be added to the config, in order to easily
 copy entire folders. It expects an array of "object" very similar to
@@ -46,3 +48,19 @@ very similar to `firmware` entries, with the following attributes:
   firmware files must be copied; this folder will be created if it
   doesn't exist
 * `filename`: the name of the file to which the partition will be dumped
+
+## A/B partitions
+
+`blob-wrangler` reads `androidboot.slot_suffix` (or `androidboot.slot`) from
+the kernel command line. If `qbootctl` is available, its reported slot must
+match. A known active slot limits partition lookup and dynamic-partition
+mapping to that slot or an unsuffixed partition; the opposite slot is never
+used as a fallback. If the active slot is unknown, a warning is emitted and
+legacy compatibility is preserved: ordinary partitions prefer unsuffixed,
+then `_a`, then `_b`, while all available dynamic-partition containers are
+mapped.
+
+The status file records the detected slot, selected source block devices, and
+all configured files which could not be extracted. A failure marked
+`required = true` makes the command fail only after these diagnostics have
+been written to `/var/lib/blob-wrangler/status.json`.
