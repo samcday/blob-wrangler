@@ -950,48 +950,43 @@ pub fn process(
 
             let mntpath = mounts_dir.join(&entry.partition);
 
-            match mount_part(entry.partition.as_str(), &mntpath, active_slot) {
-                Ok(mounted) => {
-                    record_partition_source(&mut partitions, &entry.partition, mounted.source());
-                    debug!(
-                        "Processing folders from partition {}",
-                        entry.partition.as_str()
+            let mounted = mount_part(entry.partition.as_str(), &mntpath, active_slot)?;
+            record_partition_source(&mut partitions, &entry.partition, mounted.source());
+            debug!(
+                "Processing folders from partition {}",
+                entry.partition.as_str()
+            );
+            for folder in entry.folders {
+                let origin = mounted.path().join(&folder.name);
+                if !origin.exists() {
+                    warn!(
+                        "Unable to find {} on partition {}",
+                        folder.name, entry.partition
                     );
-                    for folder in entry.folders {
-                        let origin = mounted.path().join(&folder.name);
-                        if !origin.exists() {
-                            warn!(
-                                "Unable to find {} on partition {}",
-                                folder.name, entry.partition
-                            );
-                            continue;
-                        }
-
-                        debug!("Copying folder {}", origin.display());
-
-                        if let Err(e) = dir::copy(&origin, &destpath, &options) {
-                            warn!(
-                                "Unable to copy {} to {}: {}",
-                                origin.display(),
-                                destpath.display(),
-                                e
-                            );
-                            continue;
-                        }
-
-                        let mut destination =
-                            PathBuf::from(&destpath).join(origin.file_name().unwrap());
-                        if let Some(new_name) = folder.rename {
-                            let initial_folder = PathBuf::from(&destination);
-                            destination.set_file_name(&new_name);
-                            let _ = fs::rename(initial_folder, &destination);
-                        }
-                        folder_list.push(format!("{}", destination.display()));
-                    }
-                    mounted.cleanup();
+                    continue;
                 }
-                Err(e) => return Err(e),
+
+                debug!("Copying folder {}", origin.display());
+
+                if let Err(e) = dir::copy(&origin, &destpath, &options) {
+                    warn!(
+                        "Unable to copy {} to {}: {}",
+                        origin.display(),
+                        destpath.display(),
+                        e
+                    );
+                    continue;
+                }
+
+                let mut destination = PathBuf::from(&destpath).join(origin.file_name().unwrap());
+                if let Some(new_name) = folder.rename {
+                    let initial_folder = PathBuf::from(&destination);
+                    destination.set_file_name(&new_name);
+                    let _ = fs::rename(initial_folder, &destination);
+                }
+                folder_list.push(format!("{}", destination.display()));
             }
+            mounted.cleanup();
         }
 
         if !folder_list.is_empty() {
