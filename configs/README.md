@@ -38,6 +38,11 @@ copy entire folders. It expects an array of "object" very similar to
   * `name`: folder path on the source partition; the last path component
     will be used as the name of the copied folder
   * `rename` (optional): name to rename the folder to
+* `files` (optional): individual files to copy to the same destination,
+  using the same attributes as `firmware` files (`name`, `rename`,
+  `required`). This is for trees where a single file has to land under a
+  different name than it has on the partition, which copying a whole
+  folder cannot express.
 
 An optional `partdump` key can be added to the config, allowing to dump
 entire partitions into a single file. It expects an array of "object"
