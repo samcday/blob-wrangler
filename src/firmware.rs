@@ -146,7 +146,14 @@ pub struct FwFolder {
     partition: String,
     destination: String,
     kernel: Option<KernelConstraint>,
+    #[serde(default)]
     folders: Vec<FwFile>,
+    /// Individual files copied to the same absolute destination. Firmware
+    /// entries can already rename a file, but folder entries could only copy
+    /// whole directories, so a tree that needs one file under a different name
+    /// could not be expressed.
+    #[serde(default)]
+    files: Vec<FwFile>,
 }
 
 #[derive(Deserialize)]
@@ -990,6 +997,45 @@ pub fn process(
                 }
                 folder_list.push(format!("{}", destination.display()));
             }
+
+            for file in entry.files {
+                let origin = mounted.path().join(&file.name);
+                if !origin.exists() {
+                    if file.required {
+                        let err_str = format!(
+                            "Required file {} not found on partition {}",
+                            file.name, entry.partition
+                        );
+                        error!("{err_str}");
+                        return Err(Error::new(ErrorKind::NotFound, err_str));
+                    }
+                    warn!(
+                        "Unable to find {} on partition {}",
+                        file.name, entry.partition
+                    );
+                    continue;
+                }
+
+                let target = match &file.rename {
+                    Some(new_name) => destpath.join(new_name),
+                    None => destpath.join(origin.file_name().unwrap()),
+                };
+
+                debug!("Copying file {} to {}", origin.display(), target.display());
+
+                if let Err(e) = fs::copy(&origin, &target) {
+                    warn!(
+                        "Unable to copy {} to {}: {}",
+                        origin.display(),
+                        target.display(),
+                        e
+                    );
+                    continue;
+                }
+
+                folder_list.push(format!("{}", target.display()));
+            }
+
             mounted.cleanup();
         }
 
