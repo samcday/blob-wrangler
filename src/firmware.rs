@@ -160,6 +160,7 @@ pub struct DumpConfig {
 #[derive(Deserialize)]
 pub struct Config {
     dynpart: Option<String>,
+    #[serde(default)]
     firmware: Vec<FwConfig>,
     folders: Option<Vec<FwFolder>>,
     partdump: Option<Vec<DumpConfig>>,
@@ -928,7 +929,10 @@ pub fn process(
     }
 
     if let Some(dirs) = config.folders {
-        let options = dir::CopyOptions::new();
+        // Without overwrite, copying onto an existing folder fails; the folder
+        // is then absent from the new status and remove_stale_entries deletes
+        // it on the next run, so a populated tree destroys itself.
+        let options = dir::CopyOptions::new().overwrite(true);
         let mut folder_list = Vec::new();
 
         for entry in dirs {
