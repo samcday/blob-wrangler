@@ -24,3 +24,30 @@ firmware = [
             { name = "msnv11.bin" },
         ] },
 ]
+
+# ADSP-served content for the sensor stack (hexagonrpcd): audio calibration,
+# the DSP library trees, and the sensor registry from persist -- the ADSP
+# sensor task crashes at boot without the registry. The vendor tree names the
+# sensor configuration sns_reg_config while the ADSP asks for sns_reg.conf,
+# hence the per-file copy. socinfo is on no partition (Android synthesises it
+# at runtime), so it cannot be extracted and has to come from the OS.
+folders = [
+    { partition = "vendor", destination = "/var/lib/blob-wrangler/sensors", folders = [
+            { name = "etc/acdbdata", rename = "acdb" },
+            { name = "etc/sensors" },
+        ], files = [
+            { name = "etc/sensors/sns_reg_config", rename = "sensors/sns_reg.conf" },
+        ] },
+    { partition = "dsp", destination = "/var/lib/blob-wrangler/sensors/dsp", folders = [
+            { name = "adsp" },
+            { name = "cdsp" },
+        ] },
+    { partition = "persist", destination = "/var/lib/blob-wrangler/sensors/sensors", folders = [
+            { name = "sensors/registry/registry" },
+        ] },
+    # Modem carrier configuration, into the firmware search path. Folder
+    # destinations are absolute; this one matches the default extract path.
+    { partition = "modem", destination = "/lib/firmware/updates/qcom/qcm6490/fairphone5", folders = [
+            { name = "image/modem_pr", rename = "modem_pr" },
+        ] },
+]
