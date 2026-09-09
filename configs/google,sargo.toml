@@ -25,6 +25,9 @@ firmware = [
     { partition = "vendor", origin = "rfs/msm/mpss/readonly/vendor/mbn/mcfg_sw/generic/AUNZ/Telstra/Commercial", destination = "qcom/sdm670/sargo/mcfg", files = [
             { name = "mcfg_sw.mbn", rename = "telstra-au-commercial.mbn" },
         ] },
+    { partition = "vendor", origin = "rfs/msm/mpss/readonly/vendor/mbn/mcfg_sw/generic/AUNZ/Optus/Commercial/AU", destination = "qcom/sdm670/sargo/mcfg", files = [
+            { name = "mcfg_sw.mbn", rename = "optus-au-commercial.mbn" },
+        ] },
     { partition = "modem", origin = "image", destination = "qcom/sdm670/sargo", files = [
             { name = "mba.mbn" },
             { name = "modem.mdt" },

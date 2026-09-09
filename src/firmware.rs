@@ -1339,6 +1339,33 @@ mod tests {
     }
 
     #[test]
+    fn sargo_config_extracts_separate_stock_australian_carrier_profiles() {
+        let config: ConfigFile =
+            toml::from_str(include_str!("../configs/google,sargo.toml")).unwrap();
+        for (carrier_path, output) in [
+            ("Telstra/Commercial", "telstra-au-commercial.mbn"),
+            ("Optus/Commercial/AU", "optus-au-commercial.mbn"),
+        ] {
+            let origin =
+                format!("rfs/msm/mpss/readonly/vendor/mbn/mcfg_sw/generic/AUNZ/{carrier_path}");
+            let entries: Vec<_> = config
+                .wrangler
+                .firmware
+                .iter()
+                .filter(|entry| entry.origin == origin)
+                .collect();
+            assert_eq!(entries.len(), 1);
+            let entry = entries[0];
+            assert_eq!(entry.partition, "vendor");
+            assert_eq!(entry.destination, "qcom/sdm670/sargo/mcfg");
+            assert_eq!(entry.files.len(), 1);
+            assert_eq!(entry.files[0].name, "mcfg_sw.mbn");
+            assert_eq!(entry.files[0].rename.as_deref(), Some(output));
+            assert!(!entry.files[0].required);
+        }
+    }
+
+    #[test]
     fn every_device_config_parses() {
         for contents in [
             include_str!("../configs/fairphone,fp4.toml"),
