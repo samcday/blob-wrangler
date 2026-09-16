@@ -12,6 +12,23 @@ Run `blob-wrangler` on a supported device.
 Extraction status is written to `/var/lib/blob-wrangler/status.json`, including
 the detected Android slot, selected source partitions, and file failures.
 
+## Library
+
+The crate also exposes the extraction engine as a library. Disable default
+features when embedding it without the command-line program:
+
+```toml
+blob-wrangler = { version = "0.0.1", default-features = false }
+```
+
+Use `bundled_config` to select an embedded device configuration in device-tree
+compatible order, then call `extract` with an `ExtractOptions` value and a
+`PartitionResolver`. The resolver owns platform-specific partition discovery
+and dynamic-partition setup; the extraction library does not invoke systemd or
+assume a `/dev/disk/by-partlabel` layout. A `MountedDirectory` returned by a
+resolver must be a read-only view. Block devices are mounted read-only by the
+library and unmounted automatically.
+
 ## License
 
 `blob-wrangler` is licensed under `MIT AND BSD-3-Clause`.

@@ -32,32 +32,31 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-use std::io::{Error, ErrorKind, Read, Seek, SeekFrom};
-use std::os::unix::fs::{FileExt, MetadataExt};
+use std::collections::BTreeSet;
+use std::ffi::OsString;
+use std::fs;
+use std::io::{self, Error, ErrorKind, Read, Seek, SeekFrom};
+use std::os::unix::fs::{FileExt, FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::{fs, thread, time::Duration};
-
-use std::io::prelude::*;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use fs_extra::dir;
 use goblin::elf::Elf;
 use nix::mount::{MntFlags, MsFlags, mount, umount2};
 use serde::{Deserialize, Serialize};
 
-use crate::utils;
-
 const FLAGS_READ_MASK: u32 = 0x07000000;
 const FLAGS_MDT_VALUE: u32 = 0x02000000;
-const MAPPER_DIR: &str = "/dev/mapper";
-const PARTLABEL_DIR: &str = "/dev/disk/by-partlabel";
 const MOUNTINFO_PATH: &str = "/proc/self/mountinfo";
 const MOUNT_FILESYSTEM_TYPES: &[&str] = &["ext4", "erofs", "f2fs", "vfat", "exfat"];
+static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 struct MountedPartition {
     path: PathBuf,
     source: PathBuf,
     temporary: bool,
+    remove_mountpoint: bool,
 }
 
 impl MountedPartition {
@@ -66,14 +65,16 @@ impl MountedPartition {
             path,
             source,
             temporary: false,
+            remove_mountpoint: false,
         }
     }
 
-    fn temporary(path: PathBuf, source: PathBuf) -> Self {
+    fn temporary(path: PathBuf, source: PathBuf, remove_mountpoint: bool) -> Self {
         Self {
             path,
             source,
             temporary: true,
+            remove_mountpoint,
         }
     }
 
@@ -84,11 +85,31 @@ impl MountedPartition {
     fn source(&self) -> &Path {
         &self.source
     }
+}
 
-    fn cleanup(self) {
-        if self.temporary {
-            let _res = umount2(&self.path, MntFlags::empty());
-            let _r = fs::remove_dir(self.path);
+impl Drop for MountedPartition {
+    fn drop(&mut self) {
+        if !self.temporary {
+            return;
+        }
+
+        if let Err(error) = umount2(&self.path, MntFlags::empty()) {
+            warn!(
+                "Unable to unmount temporary firmware mount {}: {}",
+                self.path.display(),
+                error
+            );
+            return;
+        }
+
+        if self.remove_mountpoint
+            && let Err(error) = fs::remove_dir(&self.path)
+        {
+            warn!(
+                "Unable to remove temporary firmware mount {}: {}",
+                self.path.display(),
+                error
+            );
         }
     }
 }
@@ -115,7 +136,7 @@ struct KernelVersion {
     patch: u32,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct KernelConstraint {
     lt: Option<String>,
     lte: Option<String>,
@@ -124,7 +145,7 @@ pub struct KernelConstraint {
     eq: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct FwFile {
     name: String,
     rename: Option<String>,
@@ -132,7 +153,7 @@ pub struct FwFile {
     required: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct FwConfig {
     partition: String,
     origin: String,
@@ -141,7 +162,7 @@ pub struct FwConfig {
     files: Vec<FwFile>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct FwFolder {
     partition: String,
     destination: String,
@@ -156,7 +177,7 @@ pub struct FwFolder {
     files: Vec<FwFile>,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct DumpConfig {
     partition: String,
     destination: String,
@@ -164,7 +185,7 @@ pub struct DumpConfig {
     filename: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct Config {
     dynpart: Option<String>,
     #[serde(default)]
@@ -186,6 +207,78 @@ pub struct FileFailure {
     pub destination: String,
     pub required: bool,
     pub error: String,
+}
+
+impl Config {
+    pub fn dynpart(&self) -> Option<&str> {
+        self.dynpart.as_deref()
+    }
+
+    pub fn referenced_partitions(&self) -> impl Iterator<Item = &str> {
+        let mut partitions = BTreeSet::new();
+        partitions.extend(self.firmware.iter().map(|entry| entry.partition.as_str()));
+        partitions.extend(
+            self.folders
+                .iter()
+                .flatten()
+                .map(|entry| entry.partition.as_str()),
+        );
+        partitions.extend(
+            self.partdump
+                .iter()
+                .flatten()
+                .map(|entry| entry.partition.as_str()),
+        );
+        partitions.into_iter()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ResolvedPartition {
+    BlockDevice(PathBuf),
+    MountedDirectory(PathBuf),
+}
+
+pub trait PartitionResolver: Send + Sync {
+    fn resolve(&self, partition: &str) -> io::Result<Option<ResolvedPartition>>;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExtractOptions {
+    pub extract_path: PathBuf,
+    pub mounts_dir: PathBuf,
+    pub running_kernel_release: Option<String>,
+    pub active_slot: Option<Slot>,
+}
+
+impl ExtractOptions {
+    pub fn new(extract_path: impl Into<PathBuf>, mounts_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            extract_path: extract_path.into(),
+            mounts_dir: mounts_dir.into(),
+            running_kernel_release: None,
+            active_slot: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum MissingItem {
+    Partition { partition: String },
+    File { partition: String, path: PathBuf },
+    Directory { partition: String, path: PathBuf },
+    PartitionDump { partition: String },
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ExtractionReport {
+    pub files: Vec<PathBuf>,
+    pub directories: Vec<PathBuf>,
+    pub missing: Vec<MissingItem>,
+    pub kernel_release: Option<String>,
+    pub active_slot: Option<String>,
+    pub partitions: Vec<PartitionStatus>,
+    pub failures: Vec<FileFailure>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -308,6 +401,31 @@ pub fn detect_active_slot() -> Result<Option<Slot>, Error> {
     Ok(slot)
 }
 
+impl From<&ExtractionReport> for Status {
+    fn from(report: &ExtractionReport) -> Self {
+        let folders = (!report.directories.is_empty()).then(|| {
+            report
+                .directories
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect()
+        });
+
+        Self {
+            files: report
+                .files
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect(),
+            folders,
+            kernel_release: report.kernel_release.clone(),
+            active_slot: report.active_slot.clone(),
+            partitions: report.partitions.clone(),
+            failures: report.failures.clone(),
+        }
+    }
+}
+
 fn parse_kernel_version(version: &str) -> Option<KernelVersion> {
     let prefix = version
         .chars()
@@ -420,16 +538,22 @@ fn parse_mountinfo_device(device: &str) -> Option<(u64, u64)> {
     Some((major.parse().ok()?, minor.parse().ok()?))
 }
 
+#[derive(Debug, Eq, PartialEq)]
+struct ExistingMount {
+    path: PathBuf,
+    read_only: bool,
+}
+
 fn mounted_path_from_mountinfo(
     mountinfo: &str,
     source_major: u64,
     source_minor: u64,
-) -> Option<PathBuf> {
+) -> Option<ExistingMount> {
     let mut fallback = None;
 
     for line in mountinfo.lines() {
         let fields = line.split(' ').collect::<Vec<_>>();
-        if fields.len() < 5 {
+        if fields.len() < 6 {
             continue;
         }
 
@@ -437,7 +561,10 @@ fn mounted_path_from_mountinfo(
             continue;
         }
 
-        let mountpoint = decode_mountinfo_path(fields[4]);
+        let mountpoint = ExistingMount {
+            path: decode_mountinfo_path(fields[4]),
+            read_only: fields[5].split(',').any(|option| option == "ro"),
+        };
         if fields[3] == "/" {
             return Some(mountpoint);
         }
@@ -450,36 +577,54 @@ fn mounted_path_from_mountinfo(
     fallback
 }
 
-fn already_mounted_path(srcpath: &Path) -> Option<PathBuf> {
+fn already_mounted_path(srcpath: &Path) -> Option<ExistingMount> {
     let (source_major, source_minor) = device_numbers(fs::metadata(srcpath).ok()?.rdev());
     let mountinfo = fs::read_to_string(MOUNTINFO_PATH).ok()?;
 
     mounted_path_from_mountinfo(&mountinfo, source_major, source_minor)
 }
 
-fn mounted_partition(srcpath: &Path) -> Option<MountedPartition> {
-    let mountpoint = already_mounted_path(srcpath)?;
+fn mounted_partition(srcpath: &Path) -> Result<Option<MountedPartition>, Error> {
+    let Some(mountpoint) = already_mounted_path(srcpath) else {
+        return Ok(None);
+    };
+    if !mountpoint.read_only {
+        return Err(Error::new(
+            ErrorKind::PermissionDenied,
+            format!(
+                "Refusing to use read-write mount {} for partition {}",
+                mountpoint.path.display(),
+                srcpath.display()
+            ),
+        ));
+    }
     debug!(
         "Using already mounted partition {} at {}",
         srcpath.display(),
-        mountpoint.display()
+        mountpoint.path.display()
     );
-    Some(MountedPartition::existing(
-        mountpoint,
+    Ok(Some(MountedPartition::existing(
+        mountpoint.path,
         srcpath.to_path_buf(),
-    ))
+    )))
 }
 
-fn mount_srcpath(
-    srcpath: &Path,
-    mountpath: &Path,
-    flags: MsFlags,
-) -> Result<MountedPartition, Error> {
-    if let Some(mounted) = mounted_partition(srcpath) {
+fn mount_srcpath(srcpath: &Path, mountpath: &Path) -> Result<MountedPartition, Error> {
+    let metadata = fs::metadata(srcpath)?;
+    if !metadata.file_type().is_block_device() {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            format!("{} is not a block device", srcpath.display()),
+        ));
+    }
+
+    if let Some(mounted) = mounted_partition(srcpath)? {
         return Ok(mounted);
     }
 
-    let _res = fs::DirBuilder::new().recursive(true).create(mountpath);
+    let remove_mountpoint = !mountpath.exists();
+    fs::DirBuilder::new().recursive(true).create(mountpath)?;
+    let flags = MsFlags::MS_RDONLY | MsFlags::MS_NODEV | MsFlags::MS_NOSUID | MsFlags::MS_NOEXEC;
 
     let mut last_error = None;
     for fstype in MOUNT_FILESYSTEM_TYPES {
@@ -495,6 +640,7 @@ fn mount_srcpath(
                 return Ok(MountedPartition::temporary(
                     mountpath.to_path_buf(),
                     srcpath.to_path_buf(),
+                    remove_mountpoint,
                 ));
             }
             Err(e) => {
@@ -511,14 +657,14 @@ fn mount_srcpath(
             }
         }
 
-        if let Some(mounted) = mounted_partition(srcpath) {
+        if let Some(mounted) = mounted_partition(srcpath)? {
             return Ok(mounted);
         }
     }
 
     match last_error {
         Some(e) => {
-            if let Some(mounted) = mounted_partition(srcpath) {
+            if let Some(mounted) = mounted_partition(srcpath)? {
                 return Ok(mounted);
             }
 
@@ -528,6 +674,9 @@ fn mount_srcpath(
                 mountpath.display(),
                 e
             );
+            if remove_mountpoint {
+                let _ = fs::remove_dir(mountpath);
+            }
             Err(e)
         }
         None => Err(Error::other("No supported filesystems configured")),
@@ -541,7 +690,7 @@ fn find_in_roots(name: &str, roots: &[&Path]) -> Option<PathBuf> {
         .find(|path| path.exists())
 }
 
-fn select_partition_path(
+pub fn select_partition_path(
     part: &str,
     active_slot: Option<Slot>,
     roots: &[&Path],
@@ -585,19 +734,27 @@ fn select_partition_path(
     ))
 }
 
-fn mount_part(
-    part: &str,
+fn resolve_partition(
+    resolver: &dyn PartitionResolver,
+    partition: &str,
     mountpath: &Path,
-    active_slot: Option<Slot>,
-) -> Result<MountedPartition, Error> {
-    let mapper_dir = Path::new(MAPPER_DIR);
-    let partlabel_dir = Path::new(PARTLABEL_DIR);
-    let srcpath = select_partition_path(part, active_slot, &[mapper_dir, partlabel_dir])?;
-
-    mount_srcpath(&srcpath, mountpath, MsFlags::MS_RDONLY)
+) -> Result<Option<MountedPartition>, Error> {
+    match resolver.resolve(partition)? {
+        Some(ResolvedPartition::BlockDevice(path)) => mount_srcpath(&path, mountpath).map(Some),
+        Some(ResolvedPartition::MountedDirectory(path)) => {
+            if !fs::metadata(&path)?.is_dir() {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("{} is not a mounted directory", path.display()),
+                ));
+            }
+            Ok(Some(MountedPartition::existing(path.clone(), path)))
+        }
+        None => Ok(None),
+    }
 }
 
-fn squash_file(inpath: &PathBuf, outpath: &PathBuf) -> Result<(), Error> {
+fn squash_file(inpath: &Path, outpath: &Path) -> Result<(), Error> {
     let buffer = match fs::read(inpath) {
         Ok(buf) => buf,
         Err(e) => {
@@ -614,7 +771,7 @@ fn squash_file(inpath: &PathBuf, outpath: &PathBuf) -> Result<(), Error> {
         }
     };
 
-    let mut count = 0;
+    let mut count = 0_u32;
     let mut hashoffset = 0;
 
     let mut mdt_fd = fs::File::open(inpath)?;
@@ -631,34 +788,38 @@ fn squash_file(inpath: &PathBuf, outpath: &PathBuf) -> Result<(), Error> {
             continue;
         }
 
-        let mut buffer: Vec<u8> = Vec::new();
+        let segment_size = usize::try_from(phdr.p_filesz).map_err(|_| {
+            Error::new(
+                ErrorKind::InvalidData,
+                format!("ELF segment is too large in {}", inpath.display()),
+            )
+        })?;
+        let mut segment = Vec::new();
 
         if (phdr.p_flags & FLAGS_READ_MASK) == FLAGS_MDT_VALUE {
             mdt_fd.seek(SeekFrom::Start(hashoffset))?;
-            buffer.resize(phdr.p_filesz as usize, Default::default());
-            mdt_fd.read_exact(buffer.as_mut_slice())?;
-        }
-
-        if buffer.is_empty() {
-            let mut bxx_name = inpath.clone();
+            segment.resize(segment_size, 0);
+            mdt_fd.read_exact(&mut segment)?;
+        } else {
+            let mut bxx_name = inpath.to_path_buf();
             bxx_name.set_extension(format!("b{:#02}", count - 1));
 
             let mut bxx_fd = fs::File::open(&bxx_name)?;
-            bxx_fd.read_to_end(&mut buffer)?;
+            bxx_fd.read_to_end(&mut segment)?;
         }
 
-        if buffer.len() != phdr.p_filesz as usize {
-            let err_str = format!("Read {} bytes (!= {})", buffer.len(), phdr.p_filesz);
+        if segment.len() != segment_size {
+            let err_str = format!("Read {} bytes (!= {})", segment.len(), phdr.p_filesz);
             return Err(Error::new(ErrorKind::UnexpectedEof, err_str));
         }
 
-        mbn_fd.write_all_at(buffer.as_slice(), phdr.p_offset)?;
+        write_all_at(&mbn_fd, &segment, phdr.p_offset)?;
     }
 
     Ok(())
 }
 
-fn dynpart_paths(
+pub fn dynpart_paths(
     part: &str,
     active_slot: Option<Slot>,
     partlabel_dir: &Path,
@@ -684,49 +845,6 @@ fn dynpart_paths(
         "Active slot is unknown; preserving legacy behavior by mapping every available {part} dynamic-partition container"
     );
     Ok(paths)
-}
-
-fn start_dynpart_mapping(dynpart: &Path) -> Result<(), Error> {
-    let mapped_name = dynpart
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| Error::new(ErrorKind::InvalidData, "Invalid dynamic partition name"))?;
-
-    utils::execute(
-        "systemctl",
-        Some(vec![
-            "start",
-            &format!("make-dynpart-mappings@{mapped_name}.service"),
-        ]),
-    )
-}
-
-fn map_dynpart(part: &str, active_slot: Option<Slot>) -> Result<Vec<PathBuf>, Error> {
-    let paths = dynpart_paths(part, active_slot, Path::new(PARTLABEL_DIR))?;
-    let mut mapped = Vec::new();
-    let mut last_error = None;
-
-    for path in paths {
-        match start_dynpart_mapping(&path) {
-            Ok(()) => mapped.push(path),
-            Err(error) if active_slot.is_none() => {
-                warn!(
-                    "Unable to map dynamic partition container {}: {error}",
-                    path.display()
-                );
-                last_error = Some(error);
-            }
-            Err(error) => return Err(error),
-        }
-    }
-
-    if mapped.is_empty() {
-        return Err(last_error.unwrap_or_else(|| {
-            Error::other(format!("Failed to map dynamic partition container {part}"))
-        }));
-    }
-
-    Ok(mapped)
 }
 
 fn firmware_destination(destpath: &Path, file: &FwFile) -> PathBuf {
@@ -789,46 +907,150 @@ fn record_partition_source(partitions: &mut Vec<PartitionStatus>, partition: &st
     }
 }
 
-pub fn process(
-    config: Config,
-    extract_path: &String,
-    mounts_dir: &Path,
-    running_kernel_release: Option<&str>,
-    active_slot: Option<Slot>,
-) -> Result<Status, Error> {
-    let mut files: Vec<String> = Vec::new();
-    let mut folders: Option<Vec<String>> = None;
-    let mut partitions = Vec::new();
-    let mut failures = Vec::new();
+fn write_all_at(file: &fs::File, mut buffer: &[u8], mut offset: u64) -> Result<(), Error> {
+    while !buffer.is_empty() {
+        let written = file.write_at(buffer, offset)?;
+        if written == 0 {
+            return Err(Error::new(
+                ErrorKind::WriteZero,
+                "unable to write squashed firmware segment",
+            ));
+        }
+        buffer = &buffer[written..];
+        offset += written as u64;
+    }
+
+    Ok(())
+}
+
+struct TemporaryOutput {
+    path: PathBuf,
+    committed: bool,
+}
+
+impl TemporaryOutput {
+    fn create(destination: &Path) -> Result<Self, Error> {
+        let parent = destination.parent().ok_or_else(|| {
+            Error::new(
+                ErrorKind::InvalidInput,
+                format!("Output path {} has no parent", destination.display()),
+            )
+        })?;
+        let file_name = destination.file_name().ok_or_else(|| {
+            Error::new(
+                ErrorKind::InvalidInput,
+                format!("Output path {} has no file name", destination.display()),
+            )
+        })?;
+
+        for _ in 0..128 {
+            let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let mut temp_name = OsString::from(".");
+            temp_name.push(file_name);
+            temp_name.push(format!(
+                ".blob-wrangler-{}-{sequence}.tmp",
+                std::process::id()
+            ));
+            let path = parent.join(temp_name);
+            match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(_) => {
+                    return Ok(Self {
+                        path,
+                        committed: false,
+                    });
+                }
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error),
+            }
+        }
+
+        Err(Error::new(
+            ErrorKind::AlreadyExists,
+            format!(
+                "Unable to allocate a temporary output beside {}",
+                destination.display()
+            ),
+        ))
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+
+    fn commit(mut self, destination: &Path) -> Result<(), Error> {
+        fs::rename(&self.path, destination)?;
+        self.committed = true;
+        Ok(())
+    }
+}
+
+impl Drop for TemporaryOutput {
+    fn drop(&mut self) {
+        if !self.committed
+            && let Err(error) = fs::remove_file(&self.path)
+            && error.kind() != ErrorKind::NotFound
+        {
+            warn!(
+                "Unable to remove temporary output {}: {}",
+                self.path.display(),
+                error
+            );
+        }
+    }
+}
+
+fn copy_file(origin: &Path, destination: &Path) -> Result<(), Error> {
+    let temporary = TemporaryOutput::create(destination)?;
+    fs::copy(origin, temporary.path())?;
+    temporary.commit(destination)
+}
+
+fn squash_firmware(origin: &Path, destination: &Path) -> Result<(), Error> {
+    let temporary = TemporaryOutput::create(destination)?;
+    squash_file(origin, temporary.path())?;
+    temporary.commit(destination)
+}
+
+fn dump_partition(origin: &Path, destination: &Path) -> Result<(), Error> {
+    let temporary = TemporaryOutput::create(destination)?;
+    let mut input = fs::File::open(origin)?;
+    let mut output = fs::File::create(temporary.path())?;
+    io::copy(&mut input, &mut output)?;
+    drop(output);
+    temporary.commit(destination)
+}
+
+fn missing_partition(report: &mut ExtractionReport, partition: &str) {
+    let item = MissingItem::Partition {
+        partition: partition.to_string(),
+    };
+    if !report.missing.contains(&item) {
+        report.missing.push(item);
+    }
+}
+
+pub fn extract(
+    config: &Config,
+    resolver: &dyn PartitionResolver,
+    options: &ExtractOptions,
+) -> Result<ExtractionReport, Error> {
+    let running_kernel_release = options.running_kernel_release.as_deref();
     let running_kernel = running_kernel_release.and_then(parse_kernel_version);
+    let mut report = ExtractionReport {
+        kernel_release: options.running_kernel_release.clone(),
+        active_slot: options.active_slot.map(|slot| slot.suffix().to_string()),
+        ..ExtractionReport::default()
+    };
 
     if running_kernel_release.is_some() && running_kernel.is_none() {
         warn!("Unable to parse running kernel release, kernel filtering disabled");
     }
 
-    // Map the "super" partition if we expect one
-    if let Some(part) = config.dynpart {
-        info!("Mapping {part} as the dynamic partition container");
-        let mapped = map_dynpart(&part, active_slot)?;
-        for source in mapped {
-            partitions.push(PartitionStatus {
-                partition: format!("dynpart:{part}"),
-                source: source.display().to_string(),
-            });
-        }
-
-        // Wait up to 500ms to ensure mapped partitions appear under /dev/mapper.
-        for _ in 0..5 {
-            if let Ok(mapped) = fs::read_dir(MAPPER_DIR)
-                && mapped.count() > 1
-            {
-                break;
-            }
-            thread::sleep(Duration::from_millis(100));
-        }
-    }
-
-    for entry in config.firmware {
+    for entry in &config.firmware {
         if !kernel_filter_match(
             &entry.kernel,
             running_kernel.as_ref(),
@@ -838,109 +1060,127 @@ pub fn process(
             continue;
         }
 
-        let destpath = PathBuf::from(extract_path).join(&entry.destination);
+        let destpath = options.extract_path.join(&entry.destination);
 
         if let Err(e) = fs::create_dir_all(&destpath) {
             warn!("Unable to create folder {}: {}", destpath.display(), e);
             record_entry_failures(
-                &mut failures,
-                &entry,
+                &mut report.failures,
+                entry,
                 &destpath,
                 &format!("unable to create destination directory: {e}"),
             );
+            report
+                .missing
+                .extend(entry.files.iter().map(|file| MissingItem::File {
+                    partition: entry.partition.clone(),
+                    path: PathBuf::from(&entry.origin).join(&file.name),
+                }));
             continue;
         }
 
-        let mntpath = mounts_dir.join(&entry.partition);
-
-        match mount_part(entry.partition.as_str(), &mntpath, active_slot) {
-            Ok(mounted) => {
-                record_partition_source(&mut partitions, &entry.partition, mounted.source());
-                debug!(
-                    "Processing firmware files from partition {}",
-                    entry.partition.as_str()
+        let mntpath = options.mounts_dir.join(&entry.partition);
+        let mounted = match resolve_partition(resolver, &entry.partition, &mntpath) {
+            Ok(Some(mounted)) => {
+                record_partition_source(&mut report.partitions, &entry.partition, mounted.source());
+                mounted
+            }
+            Ok(None) => {
+                warn!("Unable to resolve partition {}", entry.partition);
+                missing_partition(&mut report, &entry.partition);
+                record_entry_failures(
+                    &mut report.failures,
+                    entry,
+                    &destpath,
+                    "unable to resolve source partition",
                 );
-                for file in &entry.files {
-                    let origin = mounted.path().join(&entry.origin).join(&file.name);
-                    let destination = firmware_destination(&destpath, file);
-                    if !origin.exists() {
-                        warn!(
-                            "Unable to find {} on partition {}",
-                            file.name, entry.partition
-                        );
-                        record_file_failure(
-                            &mut failures,
-                            &entry.partition,
-                            &origin,
-                            &destination,
-                            file.required,
-                            "source file does not exist",
-                        );
-                        continue;
-                    }
-
-                    debug!("Copying firmware file {}", origin.display());
-
-                    if file.name.ends_with(".mdt") {
-                        trace!("Squashing MDT file into MBN");
-                        if let Err(e) = squash_file(&origin, &destination) {
-                            let _ = fs::remove_file(&destination);
-                            warn!(
-                                "Unable to squash {} to {}: {}",
-                                origin.display(),
-                                destination.display(),
-                                e
-                            );
-                            record_file_failure(
-                                &mut failures,
-                                &entry.partition,
-                                &origin,
-                                &destination,
-                                file.required,
-                                format!("unable to squash MDT: {e}"),
-                            );
-                            continue;
-                        }
-                    } else if let Err(e) = fs::copy(&origin, &destination) {
-                        warn!(
-                            "Unable to copy {} to {}: {}",
-                            origin.display(),
-                            destination.display(),
-                            e
-                        );
-                        record_file_failure(
-                            &mut failures,
-                            &entry.partition,
-                            &origin,
-                            &destination,
-                            file.required,
-                            format!("unable to copy file: {e}"),
-                        );
-                        continue;
-                    }
-
-                    files.push(format!("{}", destination.display()));
-                }
-                mounted.cleanup();
+                continue;
             }
             Err(e) => {
                 warn!("Unable to mount partition {}: {e}", entry.partition);
                 record_entry_failures(
-                    &mut failures,
-                    &entry,
+                    &mut report.failures,
+                    entry,
                     &destpath,
                     &format!("unable to mount source partition: {e}"),
                 );
+                continue;
             }
+        };
+
+        debug!(
+            "Processing firmware files from partition {}",
+            entry.partition
+        );
+        for file in &entry.files {
+            let relative_origin = PathBuf::from(&entry.origin).join(&file.name);
+            let origin = mounted.path().join(&relative_origin);
+            let destination = firmware_destination(&destpath, file);
+            if !origin.exists() {
+                warn!(
+                    "Unable to find {} on partition {}",
+                    file.name, entry.partition
+                );
+                report.missing.push(MissingItem::File {
+                    partition: entry.partition.clone(),
+                    path: relative_origin,
+                });
+                record_file_failure(
+                    &mut report.failures,
+                    &entry.partition,
+                    &origin,
+                    &destination,
+                    file.required,
+                    "source file does not exist",
+                );
+                continue;
+            }
+
+            debug!("Copying firmware file {}", origin.display());
+
+            let squashed = file.name.ends_with(".mdt");
+            let result = if squashed {
+                trace!("Squashing MDT file into MBN");
+                squash_firmware(&origin, &destination)
+            } else {
+                copy_file(&origin, &destination)
+            };
+
+            if let Err(e) = result {
+                warn!(
+                    "Unable to copy {} to {}: {}",
+                    origin.display(),
+                    destination.display(),
+                    e
+                );
+                report.missing.push(MissingItem::File {
+                    partition: entry.partition.clone(),
+                    path: relative_origin,
+                });
+                record_file_failure(
+                    &mut report.failures,
+                    &entry.partition,
+                    &origin,
+                    &destination,
+                    file.required,
+                    if squashed {
+                        format!("unable to squash MDT: {e}")
+                    } else {
+                        format!("unable to copy file: {e}")
+                    },
+                );
+                continue;
+            }
+
+            report.files.push(destination);
         }
     }
 
-    if let Some(dirs) = config.folders {
+    if let Some(dirs) = &config.folders {
         // Without overwrite, copying onto an existing folder fails; the folder
         // is then absent from the new status and remove_stale_entries deletes
         // it on the next run, so a populated tree destroys itself.
-        let options = dir::CopyOptions::new().overwrite(true);
-        let mut folder_list = Vec::new();
+        let copy_options = dir::CopyOptions::new().overwrite(true);
 
         for entry in dirs {
             if !kernel_filter_match(
@@ -952,99 +1192,162 @@ pub fn process(
                 continue;
             }
 
-            let destpath = PathBuf::from(entry.destination);
+            let destpath = PathBuf::from(&entry.destination);
 
             if let Err(e) = fs::create_dir_all(&destpath) {
                 warn!("Unable to create folder {}: {}", destpath.display(), e);
+                report
+                    .missing
+                    .extend(entry.folders.iter().map(|folder| MissingItem::Directory {
+                        partition: entry.partition.clone(),
+                        path: PathBuf::from(&folder.name),
+                    }));
                 continue;
             }
 
-            let mntpath = mounts_dir.join(&entry.partition);
+            let mntpath = options.mounts_dir.join(&entry.partition);
+            let mounted = match resolve_partition(resolver, &entry.partition, &mntpath) {
+                Ok(Some(mounted)) => {
+                    record_partition_source(
+                        &mut report.partitions,
+                        &entry.partition,
+                        mounted.source(),
+                    );
+                    mounted
+                }
+                Ok(None) => {
+                    warn!("Unable to resolve partition {}", entry.partition);
+                    missing_partition(&mut report, &entry.partition);
+                    continue;
+                }
+                Err(e) => {
+                    warn!("Unable to mount partition {}: {e}", entry.partition);
+                    continue;
+                }
+            };
 
-            let mounted = mount_part(entry.partition.as_str(), &mntpath, active_slot)?;
-            record_partition_source(&mut partitions, &entry.partition, mounted.source());
-            debug!(
-                "Processing folders from partition {}",
-                entry.partition.as_str()
-            );
-            for folder in entry.folders {
-                let origin = mounted.path().join(&folder.name);
+            debug!("Processing folders from partition {}", entry.partition);
+            for folder in &entry.folders {
+                let relative_origin = PathBuf::from(&folder.name);
+                let origin = mounted.path().join(&relative_origin);
                 if !origin.exists() {
                     warn!(
                         "Unable to find {} on partition {}",
                         folder.name, entry.partition
                     );
+                    report.missing.push(MissingItem::Directory {
+                        partition: entry.partition.clone(),
+                        path: relative_origin,
+                    });
                     continue;
                 }
 
                 debug!("Copying folder {}", origin.display());
 
-                if let Err(e) = dir::copy(&origin, &destpath, &options) {
+                if let Err(e) = dir::copy(&origin, &destpath, &copy_options) {
                     warn!(
                         "Unable to copy {} to {}: {}",
                         origin.display(),
                         destpath.display(),
                         e
                     );
+                    report.missing.push(MissingItem::Directory {
+                        partition: entry.partition.clone(),
+                        path: relative_origin,
+                    });
                     continue;
                 }
 
-                let mut destination = PathBuf::from(&destpath).join(origin.file_name().unwrap());
-                if let Some(new_name) = folder.rename {
-                    let initial_folder = PathBuf::from(&destination);
-                    destination.set_file_name(&new_name);
-                    let _ = fs::rename(initial_folder, &destination);
+                let Some(folder_name) = origin.file_name() else {
+                    warn!("Unable to determine folder name for {}", origin.display());
+                    report.missing.push(MissingItem::Directory {
+                        partition: entry.partition.clone(),
+                        path: relative_origin,
+                    });
+                    continue;
+                };
+                let initial_folder = destpath.join(folder_name);
+                let mut destination = initial_folder.clone();
+                if let Some(new_name) = &folder.rename {
+                    destination.set_file_name(new_name);
+                    if let Err(error) = fs::rename(&initial_folder, &destination) {
+                        warn!(
+                            "Unable to rename {} to {}: {}",
+                            initial_folder.display(),
+                            destination.display(),
+                            error
+                        );
+                        destination = initial_folder;
+                        report.missing.push(MissingItem::Directory {
+                            partition: entry.partition.clone(),
+                            path: relative_origin,
+                        });
+                    }
                 }
-                folder_list.push(format!("{}", destination.display()));
+                report.directories.push(destination);
             }
 
-            for file in entry.files {
+            for file in &entry.files {
                 let origin = mounted.path().join(&file.name);
                 if !origin.exists() {
-                    if file.required {
-                        let err_str = format!(
-                            "Required file {} not found on partition {}",
-                            file.name, entry.partition
-                        );
-                        error!("{err_str}");
-                        return Err(Error::new(ErrorKind::NotFound, err_str));
-                    }
                     warn!(
                         "Unable to find {} on partition {}",
                         file.name, entry.partition
                     );
+                    record_file_failure(
+                        &mut report.failures,
+                        &entry.partition,
+                        &origin,
+                        &destpath.join(&file.name),
+                        file.required,
+                        "source file does not exist",
+                    );
                     continue;
                 }
 
-                let target = match &file.rename {
-                    Some(new_name) => destpath.join(new_name),
-                    None => destpath.join(origin.file_name().unwrap()),
+                let target = match (&file.rename, origin.file_name()) {
+                    (Some(new_name), _) => destpath.join(new_name),
+                    (None, Some(name)) => destpath.join(name),
+                    (None, None) => {
+                        warn!("Unable to determine file name for {}", origin.display());
+                        record_file_failure(
+                            &mut report.failures,
+                            &entry.partition,
+                            &origin,
+                            &destpath.join(&file.name),
+                            file.required,
+                            "unable to determine file name",
+                        );
+                        continue;
+                    }
                 };
 
                 debug!("Copying file {} to {}", origin.display(), target.display());
 
-                if let Err(e) = fs::copy(&origin, &target) {
+                if let Err(e) = copy_file(&origin, &target) {
                     warn!(
                         "Unable to copy {} to {}: {}",
                         origin.display(),
                         target.display(),
                         e
                     );
+                    record_file_failure(
+                        &mut report.failures,
+                        &entry.partition,
+                        &origin,
+                        &target,
+                        file.required,
+                        format!("unable to copy file: {e}"),
+                    );
                     continue;
                 }
 
-                folder_list.push(format!("{}", target.display()));
+                report.directories.push(target);
             }
-
-            mounted.cleanup();
-        }
-
-        if !folder_list.is_empty() {
-            folders = Some(folder_list);
         }
     }
 
-    if let Some(dumps) = config.partdump {
+    if let Some(dumps) = &config.partdump {
         for entry in dumps {
             if !kernel_filter_match(
                 &entry.kernel,
@@ -1059,36 +1362,58 @@ pub fn process(
                 "Processing partition {} for raw dump",
                 entry.partition.as_str()
             );
-            let destpath = PathBuf::from(extract_path).join(&entry.destination);
+            let destpath = options.extract_path.join(&entry.destination);
             if let Err(e) = fs::create_dir_all(&destpath) {
                 warn!("Unable to create folder {}: {}", destpath.display(), e);
+                report.missing.push(MissingItem::PartitionDump {
+                    partition: entry.partition.clone(),
+                });
                 continue;
             }
 
-            let partlabel_dir = Path::new(PARTLABEL_DIR);
-            let origin = select_partition_path(&entry.partition, active_slot, &[partlabel_dir])?;
-            record_partition_source(&mut partitions, &entry.partition, &origin);
+            let origin = match resolver.resolve(&entry.partition)? {
+                Some(ResolvedPartition::BlockDevice(path)) => {
+                    record_partition_source(&mut report.partitions, &entry.partition, &path);
+                    path
+                }
+                Some(ResolvedPartition::MountedDirectory(path)) => {
+                    return Err(Error::new(
+                        ErrorKind::InvalidInput,
+                        format!(
+                            "Cannot make a raw dump of mounted directory {} for partition {}",
+                            path.display(),
+                            entry.partition
+                        ),
+                    ));
+                }
+                None => {
+                    warn!("Unable to resolve partition {}", entry.partition);
+                    report.missing.push(MissingItem::PartitionDump {
+                        partition: entry.partition.clone(),
+                    });
+                    continue;
+                }
+            };
 
-            let destination = destpath.join(entry.filename);
-            let mut buffer: Vec<u8> = Vec::new();
-            let mut input = fs::File::open(origin)?;
-            let mut output = fs::File::create(&destination)?;
+            let destination = destpath.join(&entry.filename);
+            if let Err(error) = dump_partition(&origin, &destination) {
+                warn!(
+                    "Unable to dump partition {} to {}: {}",
+                    entry.partition,
+                    destination.display(),
+                    error
+                );
+                report.missing.push(MissingItem::PartitionDump {
+                    partition: entry.partition.clone(),
+                });
+                continue;
+            }
 
-            input.read_to_end(&mut buffer)?;
-            output.write_all(buffer.as_slice())?;
-
-            files.push(format!("{}", destination.display()));
+            report.files.push(destination);
         }
     }
 
-    Ok(Status {
-        files,
-        folders,
-        kernel_release: running_kernel_release.map(str::to_string),
-        active_slot: active_slot.map(|slot| slot.suffix().to_string()),
-        partitions,
-        failures,
-    })
+    Ok(report)
 }
 
 #[cfg(test)]
@@ -1142,6 +1467,45 @@ mod tests {
     impl Drop for TestRoots {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.base).unwrap();
+        }
+    }
+
+    static TEST_DIRECTORY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+    struct TestDirectory(PathBuf);
+
+    impl TestDirectory {
+        fn create() -> Self {
+            let sequence = TEST_DIRECTORY_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "blob-wrangler-test-{}-{sequence}",
+                std::process::id()
+            ));
+            let _ = fs::remove_dir_all(&path);
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    impl Drop for TestDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    struct TestResolver {
+        partition: &'static str,
+        directory: PathBuf,
+    }
+
+    impl PartitionResolver for TestResolver {
+        fn resolve(&self, partition: &str) -> io::Result<Option<ResolvedPartition>> {
+            Ok((partition == self.partition)
+                .then(|| ResolvedPartition::MountedDirectory(self.directory.clone())))
         }
     }
 
@@ -1546,7 +1910,10 @@ mod tests {
 
         assert_eq!(
             mounted_path_from_mountinfo(mountinfo, 259, 2),
-            Some(PathBuf::from("/var/lib/persist"))
+            Some(ExistingMount {
+                path: PathBuf::from("/var/lib/persist"),
+                read_only: false,
+            })
         );
     }
 
@@ -1556,7 +1923,132 @@ mod tests {
 
         assert_eq!(
             mounted_path_from_mountinfo(mountinfo, 8, 1),
-            Some(PathBuf::from("/mnt/foo bar"))
+            Some(ExistingMount {
+                path: PathBuf::from("/mnt/foo bar"),
+                read_only: false,
+            })
         );
+    }
+
+    #[test]
+    fn mounted_path_records_read_only_state() {
+        let mountinfo = "1 0 8:1 / /mnt/vendor ro,nodev - ext4 /dev/sda1 ro";
+
+        assert_eq!(
+            mounted_path_from_mountinfo(mountinfo, 8, 1),
+            Some(ExistingMount {
+                path: PathBuf::from("/mnt/vendor"),
+                read_only: true,
+            })
+        );
+    }
+
+    #[test]
+    fn referenced_partitions_are_unique() {
+        let config = Config {
+            dynpart: Some("super".to_string()),
+            firmware: vec![FwConfig {
+                partition: "vendor".to_string(),
+                origin: "firmware".to_string(),
+                destination: "device".to_string(),
+                kernel: None,
+                files: Vec::new(),
+            }],
+            folders: Some(vec![FwFolder {
+                partition: "vendor".to_string(),
+                destination: "/tmp/sensors".to_string(),
+                kernel: None,
+                folders: Vec::new(),
+                files: Vec::new(),
+            }]),
+            partdump: Some(vec![DumpConfig {
+                partition: "waveform".to_string(),
+                destination: "device".to_string(),
+                kernel: None,
+                filename: "waveform.bin".to_string(),
+            }]),
+        };
+
+        assert_eq!(config.dynpart(), Some("super"));
+        assert_eq!(
+            config.referenced_partitions().collect::<Vec<_>>(),
+            vec!["vendor", "waveform"]
+        );
+    }
+
+    #[test]
+    fn extracts_from_mounted_directory_and_reports_missing_items() {
+        let test = TestDirectory::create();
+        let source = test.path().join("source");
+        let firmware = source.join("firmware");
+        fs::create_dir_all(&firmware).unwrap();
+        fs::write(firmware.join("present.bin"), b"firmware").unwrap();
+
+        let config = Config {
+            dynpart: None,
+            firmware: vec![FwConfig {
+                partition: "vendor".to_string(),
+                origin: "firmware".to_string(),
+                destination: "device".to_string(),
+                kernel: None,
+                files: vec![
+                    FwFile {
+                        name: "present.bin".to_string(),
+                        rename: None,
+                        required: false,
+                    },
+                    FwFile {
+                        name: "missing.bin".to_string(),
+                        rename: None,
+                        required: false,
+                    },
+                ],
+            }],
+            folders: None,
+            partdump: None,
+        };
+        let resolver = TestResolver {
+            partition: "vendor",
+            directory: source,
+        };
+        let output = test.path().join("output");
+        let options = ExtractOptions {
+            extract_path: output.clone(),
+            mounts_dir: test.path().join("mounts"),
+            running_kernel_release: Some("6.12.0-test".to_string()),
+            active_slot: None,
+        };
+
+        let report = extract(&config, &resolver, &options).unwrap();
+
+        let destination = output.join("device/present.bin");
+        assert_eq!(fs::read(&destination).unwrap(), b"firmware");
+        assert_eq!(report.files, vec![destination]);
+        assert_eq!(
+            report.missing,
+            vec![MissingItem::File {
+                partition: "vendor".to_string(),
+                path: PathBuf::from("firmware/missing.bin"),
+            }]
+        );
+        assert_eq!(report.kernel_release.as_deref(), Some("6.12.0-test"));
+        assert!(fs::read_dir(output.join("device")).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".tmp")
+        }));
+    }
+
+    #[test]
+    fn failed_atomic_copy_preserves_existing_destination() {
+        let test = TestDirectory::create();
+        let destination = test.path().join("firmware.bin");
+        fs::write(&destination, b"existing").unwrap();
+
+        assert!(copy_file(&test.path().join("missing.bin"), &destination).is_err());
+        assert_eq!(fs::read(&destination).unwrap(), b"existing");
+        assert_eq!(fs::read_dir(test.path()).unwrap().count(), 1);
     }
 }

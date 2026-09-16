@@ -20,13 +20,25 @@ include = [
     "src/**/*.rs",
 ]
 
+[features]
+default = ["cli"]
+cli = ["dep:clap", "dep:pretty_env_logger", "dep:serde_json"]
+
+[[bin]]
+name = "blob-wrangler"
+path = "src/main.rs"
+required-features = ["cli"]
+
 [dependencies]
-clap = { version = "4.0", features = ["derive"] }
+clap = { version = "4.0", features = ["derive"], optional = true }
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_json = { version = "1.0", optional = true }
 toml = "0.9"
 goblin = "0.9"
 nix = { version = "0.31", default-features = false, features = ["mount"] }
 fs_extra = "1"
-pretty_env_logger = "0.5"
+pretty_env_logger = { version = "0.5", optional = true }
 log = "0.4"
+
+[dev-dependencies]
+serde_json = "1.0"

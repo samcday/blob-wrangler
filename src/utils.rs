@@ -8,18 +8,18 @@ pub fn execute(command: &str, arguments: Option<Vec<&str>>) -> Result<(), Error>
         exe.args(args);
     }
 
-    let res = exe.output();
-    if let Ok(out) = res {
-        std::io::stdout().write_all(&out.stdout).unwrap();
-        if out.status.success() {
-            Ok(())
-        } else {
-            std::io::stderr().write_all(&out.stderr).unwrap();
-            let err_str = format!("{} returned with exit code {}", command, out.status);
-            Err(Error::other(err_str))
-        }
+    let out = exe.output().map_err(|error| {
+        Error::new(
+            error.kind(),
+            format!("{command}: unable to execute command: {error}"),
+        )
+    })?;
+    std::io::stdout().write_all(&out.stdout)?;
+    if out.status.success() {
+        Ok(())
     } else {
-        let err_str = format!("{command}: unable to execute command!");
+        std::io::stderr().write_all(&out.stderr)?;
+        let err_str = format!("{} returned with exit code {}", command, out.status);
         Err(Error::other(err_str))
     }
 }
