@@ -1,0 +1,66 @@
+extract:
+  - partition: vendor
+    from: firmware
+    to:
+      "<7.0":  qcom/sdm845/oneplus6
+      ">=7.0": qcom/sdm845/OnePlus/enchilada
+    files:
+      - a630_zap.mdt
+      - ipa_fws.mdt
+
+  - partition: vendor
+    from: etc/firmware
+    to: .
+    files:
+      - tfa98xx.cnt
+
+  - partition: modem
+    from: image
+    to:
+      "<7.0":  qcom/sdm845/oneplus6
+      ">=7.0": qcom/sdm845/OnePlus/enchilada
+    files:
+      - adsp.mdt
+      - adspr.jsn
+      - adspua.jsn
+      - cdsp.mdt
+      - cdspr.jsn
+      - mba.mbn
+      - modem.mdt
+      - modemr.jsn
+      - modemuw.jsn
+      - slpi.mdt
+      - slpir.jsn
+      - slpius.jsn
+      - venus.mdt
+      - wlanmdsp.mbn
+
+  - partition: bluetooth
+    from: image
+    to:
+      "<7.0":  qca/oneplus6
+      ">=7.0": qca/OnePlus/enchilada
+    files:
+      - crnv21.bin
+
+  - partition: bluetooth
+    from: image
+    to: qca
+    files:
+      - crbtfw21.tlv
+
+  - partition: vendor
+    to: /var/lib/blob-wrangler/sensors
+    dirs:
+      - dsp
+      - { from: etc/acdbdata, to: acdb }
+      - etc/sensors
+
+  - partition: dsp
+    to: /var/lib/blob-wrangler/sensors/dsp
+    dirs: [adsp, cdsp, sdsp]
+
+  - partition: persist
+    to: /var/lib/blob-wrangler/sensors/sensors
+    dirs:
+      - sensors/registry/registry

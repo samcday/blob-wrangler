@@ -1,0 +1,33 @@
+dynamic-partition: super
+
+extract:
+  - partition: vendor
+    from: firmware
+    to: qcom/qcm6490/SHIFT/otter
+    files:
+      - a660_zap.mdt
+      # This line causes blob-wrangler to fail, re-enable once the issue is fixed
+      # - { from: vpu20_1v.mdt, to: venus.mdt }
+      - { from: yupik_ipa_fws.mdt, to: ipa_fws.mdt }
+
+  - partition: modem
+    from: image
+    to: qcom/qcm6490/SHIFT/otter
+    files:
+      - adsp.mdt
+      - adspr.jsn
+      - adsps.jsn
+      - adspua.jsn
+      - battmgr.jsn
+      - cdsp.mdt
+      - cdspr.jsn
+      - modem.mdt
+      - modemr.jsn
+      - wpss.mdt
+
+  - partition: bluetooth
+    from: image
+    to: qca
+    files:
+      - msbtfw11.mbn
+      - msnv11.bin

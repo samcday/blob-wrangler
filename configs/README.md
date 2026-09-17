@@ -1,58 +1,107 @@
-
 ## Device configurations
 
-`blob-wrangler` relies on per-device TOML config files named after the
-device's DT `compatible` property.
+`blob-wrangler` relies on per-device YAML config files named after the
+device's DT `compatible` property, e.g. `configs/oneplus,fajita.yaml`.
 
-The config files contain a single section named `wrangler` with a mandatory
-`firmware` key. The expected value for this key is an array of
-"objects" with the following attributes:
-* `partition`: the name of the vendor partition containing the firmware
-  files as it appears under `/dev/disk/by-partlabel/`.
-* `origin`: the folder of the vendor partition containing the firmware
-  files
-* `destination`: the base extraction directory subfolder under which the
-  firmware files must be copied; this folder will be created if it
-  doesn't exist
-* `kernel` (optional): an object used to conditionally process the entry
-  based on the running kernel release. Supported keys are `lt`, `lte`,
-  `gt`, `gte` and `eq`; each expects a version string such as `"7.0"`.
-  Conditions are combined with a logical AND and matched against the
-  numeric prefix of `uname -r`.
-* `files`: those are the firmware files to be copied by `blob-wrangler`,
-  stored as simple objects with the following attributes:
-  * `name`: original file name
-  * `rename` (optional): name to rename the file to
-  * `required` (optional, default `false`): fail the extraction service after
-    writing status diagnostics if this file is missing or cannot be copied.
+A config is a mapping with two keys:
 
-An optional `folders` key can be added to the config, in order to easily
-copy entire folders. It expects an array of "object" very similar to
-`firmware` entries; those have the following attributes:
-* `partition`
-* `destination`: the absolute path to the destination folder, which will
-  be created if needed; unlike `firmware` entries, this folder can be
-  located anywhere, not only under the base extraction directory
-* `folders`: those are the folders to be copied by `blob-wrangler`,
-  stored as simple objects with the following attributes:
-  * `name`: folder path on the source partition; the last path component
-    will be used as the name of the copied folder
-  * `rename` (optional): name to rename the folder to
-* `files` (optional): individual files to copy to the same destination,
-  using the same attributes as `firmware` files (`name`, `rename`,
-  `required`). This is for trees where a single file has to land under a
-  different name than it has on the partition, which copying a whole
-  folder cannot express.
+* `dynamic-partition` (optional): the name of the dynamic partition
+  container (`super`, `system`, ...) to map before any partition is mounted.
+* `extract`: a list of entries, each describing content to copy out of one
+  partition.
 
-An optional `partdump` key can be added to the config, allowing to dump
-entire partitions into a single file. It expects an array of "object"
-very similar to `firmware` entries, with the following attributes:
-* `partition`: the name of the vendor partition containing the firmware
-  files as it appears under `/dev/disk/by-partlabel/`.
-* `destination`: the base extraction directory subfolder under which the
-  firmware files must be copied; this folder will be created if it
-  doesn't exist
-* `filename`: the name of the file to which the partition will be dumped
+```yaml
+dynamic-partition: super
+
+extract:
+  - partition: vendor
+    from: firmware
+    to: qcom/qcm6490/fairphone5
+    files:
+      - a660_zap.mdt
+      - { from: aw882xx_acf.bin, to: aw88261_acf.bin }
+
+  - partition: vendor
+    to: /var/lib/blob-wrangler/sensors
+    dirs:
+      - { from: etc/acdbdata, to: acdb }
+      - etc/sensors
+    files:
+      - { from: etc/sensors/sns_reg_config, to: sensors/sns_reg.conf }
+
+  - partition: waveform
+    raw: true
+    to: rockchip/ebc.wbf
+```
+
+### Entries
+
+* `partition`: the name of the vendor partition as it appears under
+  `/dev/disk/by-partlabel/` (without any A/B slot suffix).
+* `from` (optional): directory on the partition that item paths are
+  relative to; defaults to the partition root.
+* `to`: the destination directory. A relative path is resolved against the
+  extract path (`/lib/firmware/updates` unless overridden, see below); an
+  absolute path is used verbatim. `.` means the extract path itself. `to`
+  can also be a kernel-conditional mapping, see below.
+* `files` (optional): individual files to copy. A file named `*.mdt` is
+  squashed together with its `.b*` segments into a single `*.mbn`.
+* `dirs` (optional): directory trees to copy recursively. Nothing inside a
+  copied tree is squashed or renamed.
+* `raw` (optional, default `false`): dump the whole partition block device
+  into the file named by `to` instead of mounting it. A raw entry cannot
+  carry `from`, `files` or `dirs`.
+
+### Items
+
+Each element of `files` and `dirs` is either a bare path, or a mapping:
+
+* `from`: path relative to the entry's `from` directory.
+* `to` (optional): name the copy is given under the entry's destination.
+  It may contain a subdirectory (`sensors/sns_reg.conf`).
+* `required` (optional, default `false`): a missing source or a failed
+  copy makes the extraction service fail, after the status file has been
+  written. Optional items are only warned about.
+
+A path listed under `files` must be a file and a path under `dirs` must be
+a directory; anything else is recorded as a failure.
+
+### Kernel-conditional destinations
+
+Where the kernel looks for firmware sometimes changes between releases.
+Rather than duplicating an entry per kernel, `to` can be a mapping from
+kernel version constraint to path:
+
+```yaml
+  - partition: modem
+    from: image
+    to:
+      "<7.0":  qcom/sdm845/oneplus6
+      ">=7.0": qcom/sdm845/OnePlus/enchilada
+    files:
+      - adsp.mdt
+      - modem.mdt
+```
+
+Constraints are `<`, `<=`, `>`, `>=` or `=` followed by a version, and are
+matched against the numeric prefix of `uname -r` in document order; the
+first match wins and `"*"` matches any kernel. If nothing matches, the
+entry is skipped.
+
+## Main configuration
+
+`/etc/blob-wrangler/config.yaml` is optional and tunes the tool itself:
+
+```yaml
+extract-path: /var/lib/firmware-extract
+postprocess:
+  - /usr/bin/true
+```
+
+* `extract-path`: where relative `to` paths land. Defaults to the kernel's
+  `firmware_class.path` parameter if set, otherwise `/lib/firmware/updates`.
+* `postprocess`: commands to run after extraction; `%k` expands to the
+  running kernel release.
 
 ## A/B partitions
 
@@ -66,6 +115,6 @@ then `_a`, then `_b`, while all available dynamic-partition containers are
 mapped.
 
 The status file records the detected slot, selected source block devices, and
-all configured files which could not be extracted. A failure marked
-`required = true` makes the command fail only after these diagnostics have
+all configured items which could not be extracted. A failure marked
+`required: true` makes the command fail only after these diagnostics have
 been written to `/var/lib/blob-wrangler/status.json`.

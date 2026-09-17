@@ -1,0 +1,25 @@
+extract:
+  - partition: apnhlos
+    from: image
+    to: qcom/sdm845/starqltechn
+    files:
+      - a630_zap.mdt
+      - ipa_fws.mdt
+      - cdsp.mdt
+      - cdspr.jsn
+      - slpi.mdt
+      - slpir.jsn
+      - slpius.jsn
+      - venus.mdt
+
+  - partition: modem
+    from: image
+    to: qcom/sdm845/starqltechn
+    files:
+      - adsp.mdt
+      - adspr.jsn
+      - adspua.jsn
+      - mba.mbn
+      - modem.mdt
+      - modemr.jsn
+      - modemuw.jsn

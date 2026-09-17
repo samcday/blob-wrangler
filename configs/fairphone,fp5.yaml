@@ -1,0 +1,61 @@
+dynamic-partition: super
+
+extract:
+  - partition: vendor
+    from: firmware
+    to: qcom/qcm6490/fairphone5
+    files:
+      - a660_zap.mdt
+      - { from: aw882xx_acf.bin,   to: aw88261_acf.bin }
+      - { from: vpu20_1v.mdt,      to: venus.mdt }
+      - { from: yupik_ipa_fws.mdt, to: ipa_fws.mdt }
+
+  - partition: modem
+    from: image
+    to: qcom/qcm6490/fairphone5
+    files:
+      - adsp.mdt
+      - adspr.jsn
+      - adsps.jsn
+      - adspua.jsn
+      - battmgr.jsn
+      - cdsp.mdt
+      - cdspr.jsn
+      - modem.mdt
+      - modemr.jsn
+      - wpss.mdt
+    # Modem carrier configuration, into the firmware search path.
+    dirs:
+      - modem_pr
+
+  - partition: bluetooth
+    from: image
+    to: qca
+    files:
+      - msbtfw11.mbn
+      - msnv11.bin
+
+  # ADSP-served content for the sensor stack (hexagonrpcd): audio calibration,
+  # the DSP library trees, and the sensor registry from persist -- the ADSP
+  # sensor task crashes at boot without the registry. The vendor tree names the
+  # sensor configuration sns_reg_config while the ADSP asks for sns_reg.conf,
+  # hence the per-file copy. socinfo is on no partition (Android synthesises it
+  # at runtime), so it cannot be extracted and has to come from the OS.
+  - partition: vendor
+    to: /var/lib/blob-wrangler/sensors
+    dirs:
+      - { from: etc/acdbdata, to: acdb }
+      - etc/sensors
+    files:
+      - { from: etc/sensors/sns_reg_config, to: sensors/sns_reg.conf }
+
+  - partition: dsp
+    to: /var/lib/blob-wrangler/sensors/dsp
+    dirs:
+      - adsp
+      - cdsp
+
+  - partition: persist
+    to: /var/lib/blob-wrangler/sensors/sensors
+    dirs:
+      - sensors/registry/registry
