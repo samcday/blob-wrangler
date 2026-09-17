@@ -1,0 +1,44 @@
+extract:
+  - partition: vendor
+    from: firmware
+    to: qcom/sdm845/polaris
+    files:
+      - a630_zap.mdt
+      - ipa_fws.mdt
+
+  - partition: vendor
+    from: firmware
+    to: .
+    files:
+      - tas2559_uCDSP.bin
+
+  - partition: modem
+    from: image
+    to: qcom/sdm845/polaris
+    files:
+      - adsp.mdt
+      - adspr.jsn
+      - adspua.jsn
+      - cdsp.mdt
+      - cdspr.jsn
+      - mba.mbn
+      - modem.mdt
+      - modemr.jsn
+      - modemuw.jsn
+      - slpi.mdt
+      - slpir.jsn
+      - slpius.jsn
+      - venus.mdt
+      - wlanmdsp.mbn
+
+  - partition: bluetooth
+    from: image
+    to: qca/polaris
+    files:
+      - crnv21.bin
+
+  - partition: bluetooth
+    from: image
+    to: qca
+    files:
+      - crbtfw21.tlv

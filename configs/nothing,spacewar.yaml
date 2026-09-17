@@ -1,0 +1,38 @@
+dynamic-partition: super
+
+extract:
+  - partition: vendor
+    from: firmware
+    to: qcom
+    files:
+      - a660_gmu.bin
+      - a660_sqe.fw
+
+  - partition: vendor
+    from: firmware
+    to: qcom/sm7325/nothing/spacewar
+    files:
+      - a660_zap.mdt
+      - { from: yupik_ipa_fws.mdt, to: ipa_fws.mdt }
+      - vpu20_1v.mbn
+
+  - partition: modem
+    from: image
+    to: qcom/sm7325/nothing/spacewar
+    files:
+      - adsp.mdt
+      - cdsp.mdt
+      - wpss.mdt
+      - modem.mdt
+      - adspr.jsn
+      - adsps.jsn
+      - adspua.jsn
+      - cdspr.jsn
+      - modemr.jsn
+
+  - partition: bluetooth
+    from: image
+    to: qca
+    files:
+      - msbtfw11.mbn
+      - msnv11.bin

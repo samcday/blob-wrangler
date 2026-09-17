@@ -1,0 +1,67 @@
+dynamic-partition: system
+
+extract:
+  - partition: vendor
+    from: firmware
+    to: qcom/sdm670/sargo
+    files:
+      - a615_zap.mdt
+      - adsp.mdt
+      - adspr.jsn
+      - adspua.jsn
+      - cdsp.mdt
+      - cdspr.jsn
+      - ipa_fws.mdt
+      - modemuw.jsn
+      - venus.mdt
+      - wlanmdsp.mbn
+
+  - partition: vendor
+    from: etc/acdbdata/OEM/sdm670-intcodec-s4-snd-card
+    to: qcom/sdm670/sargo
+    files:
+      - Global_cal.acdb
+
+  - partition: vendor
+    from: firmware
+    to: qca/sargo
+    files:
+      - crnv21.bin
+
+  - partition: vendor
+    from: firmware
+    to: qca
+    files:
+      - crbtfw21.tlv
+
+  - partition: vendor
+    from: rfs/msm/mpss/readonly/vendor/mbn/mcfg_sw/generic/AUNZ/Telstra/Commercial
+    to: qcom/sdm670/sargo/mcfg
+    files:
+      - { from: mcfg_sw.mbn, to: telstra-au-commercial.mbn }
+
+  - partition: vendor
+    from: rfs/msm/mpss/readonly/vendor/mbn/mcfg_sw/generic/AUNZ/Optus/Commercial/AU
+    to: qcom/sdm670/sargo/mcfg
+    files:
+      - { from: mcfg_sw.mbn, to: optus-au-commercial.mbn }
+
+  - partition: modem
+    from: image
+    to: qcom/sdm670/sargo
+    files:
+      - mba.mbn
+      - modem.mdt
+      - modemr.jsn
+
+  - partition: vendor
+    to: /var/lib/blob-wrangler/sensors
+    dirs:
+      - dsp
+      - { from: etc/acdbdata, to: acdb }
+      - etc/sensors
+
+  - partition: persist
+    to: /var/lib/blob-wrangler/sensors/sensors
+    dirs:
+      - sensors/registry/registry

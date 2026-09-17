@@ -1,0 +1,31 @@
+extract:
+  - partition: vendor
+    from: firmware
+    to: qcom/sm7150/xiaomi/davinci
+    files:
+      - a615_zap.mdt
+      # Having this firmware file in the rootfs makes the device crash during boot
+      # - ipa_fws.mdt
+
+  - partition: modem
+    from: image
+    to: qcom/sm7150/xiaomi/davinci
+    files:
+      - adsp.mdt
+      - adspr.jsn
+      - adsps.jsn
+      - adspua.jsn
+      - cdsp.mdt
+      - cdspr.jsn
+      - modem.mdt
+      - modemr.jsn
+      - modemuw.jsn
+      - venus.mdt
+      - wlanmdsp.mbn
+
+  - partition: bluetooth
+    from: image
+    to: qca
+    files:
+      - crnv21.bin
+      - crbtfw21.tlv

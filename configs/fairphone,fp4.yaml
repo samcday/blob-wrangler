@@ -1,0 +1,39 @@
+dynamic-partition: super
+
+extract:
+  - partition: vendor
+    from: firmware
+    to: qcom
+    files:
+      - a619_gmu.bin
+      - a630_sqe.fw
+
+  - partition: vendor
+    from: firmware
+    to: qcom/sm7225/fairphone4
+    files:
+      - a615_zap.mdt
+      - { from: lagoon_ipa_fws.mdt, to: ipa_fws.mdt }
+
+  - partition: modem
+    from: image
+    to: qcom/sm7225/fairphone4
+    files:
+      - adsp.mdt
+      - adspr.jsn
+      - adsps.jsn
+      - adspua.jsn
+      - cdsp.mdt
+      - cdspr.jsn
+      - modem.mdt
+      - modemr.jsn
+      - modemuw.jsn
+      - venus.mdt
+      - wlanmdsp.mbn
+
+  - partition: bluetooth
+    from: image
+    to: qca
+    files:
+      - apnv11.bin
+      - apbtfw11.tlv

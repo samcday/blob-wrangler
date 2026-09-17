@@ -1,0 +1,4 @@
+extract:
+  - partition: waveform
+    raw: true
+    to: rockchip/ebc.wbf

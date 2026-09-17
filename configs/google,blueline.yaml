@@ -1,0 +1,42 @@
+extract:
+  - partition: vendor
+    from: firmware
+    to: qcom/sdm845/pixel3
+    files:
+      - a630_zap.mdt
+      - adsp.mdt
+      - adspr.jsn
+      - adspua.jsn
+      - cdsp.mdt
+      - cdspr.jsn
+      - ipa_fws.mdt
+      - modemuw.jsn
+      - slpi.mdt
+      - venus.mdt
+      - wlanmdsp.mbn
+
+  - partition: vendor
+    from: firmware
+    to: qca/pixel3
+    files:
+      - crnv21.bin
+
+  - partition: vendor
+    from: firmware
+    to: qca
+    files:
+      - crbtfw21.tlv
+
+  - partition: vendor
+    from: firmware
+    to: .
+    files:
+      - ftm5_fw.ftb
+
+  - partition: modem
+    from: image
+    to: qcom/sdm845/pixel3
+    files:
+      - mba.mbn
+      - modem.mdt
+      - modemr.jsn

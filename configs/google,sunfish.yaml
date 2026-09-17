@@ -1,0 +1,33 @@
+dynamic-partition: super
+
+extract:
+  - partition: vendor
+    from: firmware
+    to: qcom/sm7150/google/sunfish
+    files:
+      - a615_zap.mdt
+      - adsp.mdt
+      - adspr.jsn
+      - adsps.jsn
+      - adspua.jsn
+      - cdsp.mdt
+      - cdspr.jsn
+      - ipa_fws.mdt
+      - modemuw.jsn
+      - venus.mdt
+      - wlanmdsp.mbn
+
+  - partition: modem
+    from: image
+    to: qcom/sm7150/google/sunfish
+    files:
+      - modem.mdt
+      - modemr.jsn
+
+  # Having those firmware files in the rootfs make the device crash during boot
+  # - partition: vendor
+  #   from: firmware
+  #   to: qca
+  #   files:
+  #     - { from: crnv21.bin, to: crnv01.bin }
+  #     - { from: crbtfw21.tlv, to: crbtfw01.tlv }

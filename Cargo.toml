@@ -15,7 +15,7 @@ include = [
     "CHANGELOG.md",
     "README.md",
     "blob-wrangler.service",
-    "configs/*.toml",
+    "configs/*.yaml",
     "configs/README.md",
     "src/**/*.rs",
 ]
@@ -24,7 +24,8 @@ include = [
 clap = { version = "4.0", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-toml = "0.9"
+serde_norway = "0.9"
+indexmap = { version = "2", features = ["serde"] }
 goblin = "0.9"
 nix = { version = "0.31", default-features = false, features = ["mount"] }
 fs_extra = "1"

@@ -42,6 +42,7 @@ use std::io::prelude::*;
 
 use fs_extra::dir;
 use goblin::elf::Elf;
+use indexmap::IndexMap;
 use nix::mount::{MntFlags, MsFlags, mount, umount2};
 use serde::{Deserialize, Serialize};
 
@@ -115,62 +116,104 @@ struct KernelVersion {
     patch: u32,
 }
 
-#[derive(Deserialize)]
-pub struct KernelConstraint {
-    lt: Option<String>,
-    lte: Option<String>,
-    gt: Option<String>,
-    gte: Option<String>,
-    eq: Option<String>,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConstraintOp {
+    Lt,
+    Lte,
+    Gt,
+    Gte,
+    Eq,
 }
 
-#[derive(Deserialize)]
-pub struct FwFile {
-    name: String,
-    rename: Option<String>,
-    #[serde(default)]
-    required: bool,
+/// An individual file or directory listed in an extract entry: either a bare
+/// path, or a mapping that renames the copy and/or marks it required.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum Item {
+    Path(String),
+    Spec {
+        from: String,
+        to: Option<String>,
+        #[serde(default)]
+        required: bool,
+    },
 }
 
-#[derive(Deserialize)]
-pub struct FwConfig {
+impl Item {
+    fn from(&self) -> &str {
+        match self {
+            Self::Path(from) => from,
+            Self::Spec { from, .. } => from,
+        }
+    }
+
+    fn to(&self) -> Option<&str> {
+        match self {
+            Self::Path(_) => None,
+            Self::Spec { to, .. } => to.as_deref(),
+        }
+    }
+
+    fn required(&self) -> bool {
+        match self {
+            Self::Path(_) => false,
+            Self::Spec { required, .. } => *required,
+        }
+    }
+}
+
+/// `to:` is either a fixed path, or an ordered map of kernel constraint to
+/// path; the first constraint matching the running kernel wins.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum Dest {
+    Fixed(String),
+    ByKernel(IndexMap<String, String>),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Entry {
     partition: String,
-    origin: String,
-    destination: String,
-    kernel: Option<KernelConstraint>,
-    files: Vec<FwFile>,
-}
-
-#[derive(Deserialize)]
-pub struct FwFolder {
-    partition: String,
-    destination: String,
-    kernel: Option<KernelConstraint>,
     #[serde(default)]
-    folders: Vec<FwFile>,
-    /// Individual files copied to the same absolute destination. Firmware
-    /// entries can already rename a file, but folder entries could only copy
-    /// whole directories, so a tree that needs one file under a different name
-    /// could not be expressed.
+    from: Option<String>,
+    to: Dest,
     #[serde(default)]
-    files: Vec<FwFile>,
+    raw: bool,
+    #[serde(default)]
+    files: Vec<Item>,
+    #[serde(default)]
+    dirs: Vec<Item>,
 }
 
-#[derive(Deserialize)]
-pub struct DumpConfig {
-    partition: String,
-    destination: String,
-    kernel: Option<KernelConstraint>,
-    filename: String,
+impl Entry {
+    /// Raw entries dump the partition block device straight into `to:` and
+    /// cannot carry any of the mount-based copy attributes.
+    fn validate(&self) -> Result<(), Error> {
+        if !self.raw {
+            return Ok(());
+        }
+
+        if self.from.is_some() || !self.files.is_empty() || !self.dirs.is_empty() {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                format!(
+                    "raw entry on partition {} must not set from, files or dirs",
+                    self.partition
+                ),
+            ));
+        }
+
+        Ok(())
+    }
 }
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(rename = "dynamic-partition", default)]
     dynpart: Option<String>,
-    #[serde(default)]
-    firmware: Vec<FwConfig>,
-    folders: Option<Vec<FwFolder>>,
-    partdump: Option<Vec<DumpConfig>>,
+    extract: Vec<Entry>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -190,8 +233,7 @@ pub struct FileFailure {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Status {
-    pub files: Vec<String>,
-    pub folders: Option<Vec<String>>,
+    pub entries: Vec<String>,
     pub kernel_release: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_slot: Option<String>,
@@ -330,72 +372,116 @@ fn parse_kernel_version(version: &str) -> Option<KernelVersion> {
     })
 }
 
-fn kernel_filter_match(
-    filter: &Option<KernelConstraint>,
-    running_kernel: Option<&KernelVersion>,
-    entry_type: &str,
-    partition: &str,
-) -> bool {
-    let Some(filter) = filter else {
-        return true;
-    };
+/// Parse a `to:` map key such as `"<7.0"` into an operator plus version.
+fn parse_constraint(constraint: &str) -> Option<(ConstraintOp, KernelVersion)> {
+    // Two-character prefixes must be tried before their one-character
+    // prefix, so `<=` wins over `<` and `>=` over `>`.
+    let (op, value) = [
+        ("<=", ConstraintOp::Lte),
+        ("<", ConstraintOp::Lt),
+        (">=", ConstraintOp::Gte),
+        (">", ConstraintOp::Gt),
+        ("=", ConstraintOp::Eq),
+    ]
+    .into_iter()
+    .find_map(|(prefix, op)| constraint.strip_prefix(prefix).map(|value| (op, value)))?;
 
-    let Some(running_kernel) = running_kernel else {
-        warn!(
-            "Unable to parse running kernel release, processing {entry_type} entry on partition {} without kernel filtering",
-            partition
-        );
-        return true;
-    };
+    Some((op, parse_kernel_version(value)?))
+}
 
-    let parse_condition = |condition: &str, value: &str| {
-        let parsed = parse_kernel_version(value);
-        if parsed.is_none() {
-            warn!(
-                "Ignoring invalid kernel filter '{}' = '{}' for {} entry on partition {}",
-                condition, value, entry_type, partition
-            );
+/// Match one kernel constraint against the running kernel. `*` is a
+/// catch-all; an unparsable constraint never matches.
+fn constraint_matches(running: KernelVersion, constraint: &str) -> bool {
+    if constraint == "*" {
+        return true;
+    }
+
+    match parse_constraint(constraint) {
+        Some((ConstraintOp::Lt, version)) => running < version,
+        Some((ConstraintOp::Lte, version)) => running <= version,
+        Some((ConstraintOp::Gt, version)) => running > version,
+        Some((ConstraintOp::Gte, version)) => running >= version,
+        Some((ConstraintOp::Eq, version)) => running == version,
+        None => {
+            warn!("Ignoring invalid kernel constraint '{constraint}'");
+            false
         }
-        parsed
+    }
+}
+
+/// Resolve an entry's `to:` for the running kernel. Kernel-conditional
+/// destinations are scanned in document order and the first matching
+/// constraint wins; `None` means the entry is skipped.
+fn resolve_destination(
+    dest: &Dest,
+    running_kernel: Option<KernelVersion>,
+    partition: &str,
+) -> Option<String> {
+    match dest {
+        Dest::Fixed(path) => Some(path.clone()),
+        Dest::ByKernel(map) => {
+            let running_kernel = match running_kernel {
+                Some(running_kernel) => running_kernel,
+                None => {
+                    warn!(
+                        "Unable to parse running kernel release, skipping kernel-conditional entry on partition {partition}"
+                    );
+                    return None;
+                }
+            };
+
+            for (constraint, path) in map {
+                if constraint_matches(running_kernel, constraint) {
+                    return Some(path.clone());
+                }
+            }
+
+            debug!(
+                "No kernel constraint matches the running kernel, skipping entry on partition {partition}"
+            );
+            None
+        }
+    }
+}
+
+/// `to:` resolves like any Unix path: relative destinations are joined onto
+/// the extract path, absolute destinations are used verbatim.
+fn destination_path(to: &str, extract_path: &str) -> PathBuf {
+    let path = Path::new(to);
+    let joined = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        Path::new(extract_path).join(path)
     };
 
-    if let Some(lt) = filter.lt.as_deref().and_then(|v| parse_condition("lt", v))
-        && *running_kernel >= lt
-    {
-        return false;
+    joined.components().collect::<PathBuf>()
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ItemKind {
+    File,
+    Dir,
+}
+
+/// Where one item lands: `to:` renames the last path component (and may
+/// itself contain a subdirectory), the source name is used otherwise.
+/// Squashing an MDT always produces an MBN, whatever the item is renamed to.
+fn item_destination(dest_dir: &Path, item: &Item, kind: ItemKind) -> PathBuf {
+    let mut destination = match item.to() {
+        Some(to) => dest_dir.join(to),
+        None => dest_dir.join(
+            Path::new(item.from())
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(item.from()),
+        ),
+    };
+
+    if kind == ItemKind::File && item.from().ends_with(".mdt") {
+        destination.set_extension("mbn");
     }
 
-    if let Some(lte) = filter
-        .lte
-        .as_deref()
-        .and_then(|v| parse_condition("lte", v))
-        && *running_kernel > lte
-    {
-        return false;
-    }
-
-    if let Some(gt) = filter.gt.as_deref().and_then(|v| parse_condition("gt", v))
-        && *running_kernel <= gt
-    {
-        return false;
-    }
-
-    if let Some(gte) = filter
-        .gte
-        .as_deref()
-        .and_then(|v| parse_condition("gte", v))
-        && *running_kernel < gte
-    {
-        return false;
-    }
-
-    if let Some(eq) = filter.eq.as_deref().and_then(|v| parse_condition("eq", v))
-        && *running_kernel != eq
-    {
-        return false;
-    }
-
-    true
+    destination
 }
 
 fn decode_mountinfo_path(path: &str) -> PathBuf {
@@ -597,7 +683,7 @@ fn mount_part(
     mount_srcpath(&srcpath, mountpath, MsFlags::MS_RDONLY)
 }
 
-fn squash_file(inpath: &PathBuf, outpath: &PathBuf) -> Result<(), Error> {
+fn squash_file(inpath: &Path, outpath: &Path) -> Result<(), Error> {
     let buffer = match fs::read(inpath) {
         Ok(buf) => buf,
         Err(e) => {
@@ -640,7 +726,7 @@ fn squash_file(inpath: &PathBuf, outpath: &PathBuf) -> Result<(), Error> {
         }
 
         if buffer.is_empty() {
-            let mut bxx_name = inpath.clone();
+            let mut bxx_name = inpath.to_path_buf();
             bxx_name.set_extension(format!("b{:#02}", count - 1));
 
             let mut bxx_fd = fs::File::open(&bxx_name)?;
@@ -729,15 +815,39 @@ fn map_dynpart(part: &str, active_slot: Option<Slot>) -> Result<Vec<PathBuf>, Er
     Ok(mapped)
 }
 
-fn firmware_destination(destpath: &Path, file: &FwFile) -> PathBuf {
-    let mut destination = destpath.join(&file.name);
-    if let Some(new_name) = &file.rename {
-        destination.set_file_name(new_name);
+/// Copy a single file, squashing MDT images into a standalone MBN when the
+/// source name calls for it.
+fn copy_file_item(source: &Path, destination: &Path, squash: bool) -> Result<(), Error> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)?;
     }
-    if file.name.ends_with(".mdt") {
-        destination.set_extension("mbn");
+
+    if !squash {
+        fs::copy(source, destination)?;
+        return Ok(());
     }
-    destination
+
+    trace!("Squashing MDT file into MBN");
+    if let Err(e) = squash_file(source, destination) {
+        let _ = fs::remove_file(destination);
+        return Err(e);
+    }
+
+    Ok(())
+}
+
+/// Copy a directory tree so that it lands exactly at `destination`, whatever
+/// the source directory is called. The destination is created first because
+/// `content_only` copies into an existing tree root rather than creating it.
+fn copy_dir_item(
+    source: &Path,
+    destination: &Path,
+    options: &dir::CopyOptions,
+) -> Result<(), Error> {
+    fs::create_dir_all(destination)?;
+    dir::copy(source, destination, options).map_err(Error::other)?;
+
+    Ok(())
 }
 
 fn record_file_failure(
@@ -757,25 +867,28 @@ fn record_file_failure(
     });
 }
 
+/// Record a failure for every item in an entry, e.g. when the destination
+/// directory cannot be created or the source partition cannot be mounted.
 fn record_entry_failures(
     failures: &mut Vec<FileFailure>,
-    entry: &FwConfig,
-    destpath: &Path,
+    entry: &Entry,
+    dest_dir: &Path,
     error: &str,
 ) {
-    for file in &entry.files {
-        let source = Path::new(&entry.partition)
-            .join(&entry.origin)
-            .join(&file.name);
-        let destination = firmware_destination(destpath, file);
-        record_file_failure(
-            failures,
-            &entry.partition,
-            &source,
-            &destination,
-            file.required,
-            error,
-        );
+    let source_base = Path::new(&entry.partition).join(entry.from.as_deref().unwrap_or(""));
+    for (items, kind) in [(&entry.files, ItemKind::File), (&entry.dirs, ItemKind::Dir)] {
+        for item in items {
+            let source = source_base.join(item.from());
+            let destination = item_destination(dest_dir, item, kind);
+            record_file_failure(
+                failures,
+                &entry.partition,
+                &source,
+                &destination,
+                item.required(),
+                error,
+            );
+        }
     }
 }
 
@@ -789,27 +902,189 @@ fn record_partition_source(partitions: &mut Vec<PartitionStatus>, partition: &st
     }
 }
 
+/// Copy one entry's items out of a mounted partition. Files and directories
+/// share this code path: a missing source, a source of the wrong kind, or a
+/// failed copy is recorded as a failure (honouring the item's `required`
+/// flag) and processing continues with the remaining items.
+fn process_items(
+    items: &[Item],
+    kind: ItemKind,
+    source_base: &Path,
+    dest_dir: &Path,
+    partition: &str,
+    failures: &mut Vec<FileFailure>,
+    extracted: &mut Vec<String>,
+) {
+    // Without overwrite, copying onto an existing folder fails; the folder
+    // is then absent from the new status and remove_stale_entries deletes
+    // it on the next run, so a populated tree destroys itself. content_only
+    // always treats the destination as the tree root, existing or not, so
+    // `to:` can rename a directory without a staging copy and a rerun
+    // refreshes the same path instead of nesting the source directory name
+    // inside it (which is what copy_inside does once the destination exists).
+    let options = dir::CopyOptions::new().overwrite(true).content_only(true);
+
+    for item in items {
+        let source = source_base.join(item.from());
+        let destination = item_destination(dest_dir, item, kind);
+
+        let metadata = match fs::metadata(&source) {
+            Ok(metadata) => metadata,
+            Err(e) => {
+                warn!(
+                    "Unable to find {} on partition {}: {}",
+                    item.from(),
+                    partition,
+                    e
+                );
+                record_file_failure(
+                    failures,
+                    partition,
+                    &source,
+                    &destination,
+                    item.required(),
+                    format!("source does not exist: {e}"),
+                );
+                continue;
+            }
+        };
+
+        let want_dir = kind == ItemKind::Dir;
+        if metadata.is_dir() != want_dir {
+            let error = if want_dir {
+                "source is not a directory"
+            } else {
+                "source is not a file"
+            };
+            warn!("{}: {error}", source.display());
+            record_file_failure(
+                failures,
+                partition,
+                &source,
+                &destination,
+                item.required(),
+                error,
+            );
+            continue;
+        }
+
+        let result = match kind {
+            ItemKind::File => copy_file_item(&source, &destination, item.from().ends_with(".mdt")),
+            ItemKind::Dir => copy_dir_item(&source, &destination, &options),
+        };
+
+        match result {
+            Ok(()) => {
+                debug!("Copied {} to {}", source.display(), destination.display());
+                extracted.push(destination.display().to_string());
+            }
+            Err(e) => {
+                warn!(
+                    "Unable to copy {} to {}: {}",
+                    source.display(),
+                    destination.display(),
+                    e
+                );
+                record_file_failure(
+                    failures,
+                    partition,
+                    &source,
+                    &destination,
+                    item.required(),
+                    format!("unable to copy: {e}"),
+                );
+            }
+        }
+    }
+}
+
+/// Dump a raw partition block device into the entry's `to:` file path.
+fn dump_raw_entry(
+    entry: &Entry,
+    destination: &Path,
+    active_slot: Option<Slot>,
+    partitions: &mut Vec<PartitionStatus>,
+    failures: &mut Vec<FileFailure>,
+    extracted: &mut Vec<String>,
+) {
+    debug!(
+        "Processing partition {} for raw dump",
+        entry.partition.as_str()
+    );
+    let partlabel_dir = Path::new(PARTLABEL_DIR);
+    let origin = match select_partition_path(&entry.partition, active_slot, &[partlabel_dir]) {
+        Ok(origin) => origin,
+        Err(e) => {
+            warn!("Unable to find partition {}: {e}", entry.partition);
+            // Raw entries have no per-item required flag; a missing block
+            // device or a failed dump must never count as a successful run.
+            record_file_failure(
+                failures,
+                &entry.partition,
+                Path::new(&entry.partition),
+                destination,
+                true,
+                format!("unable to find partition: {e}"),
+            );
+            return;
+        }
+    };
+    record_partition_source(partitions, &entry.partition, &origin);
+
+    if let Err(e) = dump_raw(&origin, destination) {
+        warn!(
+            "Unable to dump partition {} to {}: {}",
+            entry.partition,
+            destination.display(),
+            e
+        );
+        record_file_failure(
+            failures,
+            &entry.partition,
+            &origin,
+            destination,
+            true,
+            format!("unable to dump partition: {e}"),
+        );
+        return;
+    }
+
+    extracted.push(destination.display().to_string());
+}
+
+fn dump_raw(origin: &Path, destination: &Path) -> Result<(), Error> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let mut input = fs::File::open(origin)?;
+    let mut output = fs::File::create(destination)?;
+
+    let mut buffer: Vec<u8> = Vec::new();
+    input.read_to_end(&mut buffer)?;
+    output.write_all(buffer.as_slice())
+}
+
 pub fn process(
     config: Config,
-    extract_path: &String,
+    extract_path: &str,
     mounts_dir: &Path,
     running_kernel_release: Option<&str>,
     active_slot: Option<Slot>,
 ) -> Result<Status, Error> {
-    let mut files: Vec<String> = Vec::new();
-    let mut folders: Option<Vec<String>> = None;
+    let mut entries: Vec<String> = Vec::new();
     let mut partitions = Vec::new();
     let mut failures = Vec::new();
     let running_kernel = running_kernel_release.and_then(parse_kernel_version);
 
-    if running_kernel_release.is_some() && running_kernel.is_none() {
-        warn!("Unable to parse running kernel release, kernel filtering disabled");
+    for entry in &config.extract {
+        entry.validate()?;
     }
 
     // Map the "super" partition if we expect one
-    if let Some(part) = config.dynpart {
+    if let Some(part) = &config.dynpart {
         info!("Mapping {part} as the dynamic partition container");
-        let mapped = map_dynpart(&part, active_slot)?;
+        let mapped = map_dynpart(part, active_slot)?;
         for source in mapped {
             partitions.push(PartitionStatus {
                 partition: format!("dynpart:{part}"),
@@ -828,24 +1103,31 @@ pub fn process(
         }
     }
 
-    for entry in config.firmware {
-        if !kernel_filter_match(
-            &entry.kernel,
-            running_kernel.as_ref(),
-            "firmware",
-            &entry.partition,
-        ) {
+    for entry in config.extract {
+        let Some(destination) = resolve_destination(&entry.to, running_kernel, &entry.partition)
+        else {
+            continue;
+        };
+        let dest_path = destination_path(&destination, extract_path);
+
+        if entry.raw {
+            dump_raw_entry(
+                &entry,
+                &dest_path,
+                active_slot,
+                &mut partitions,
+                &mut failures,
+                &mut entries,
+            );
             continue;
         }
 
-        let destpath = PathBuf::from(extract_path).join(&entry.destination);
-
-        if let Err(e) = fs::create_dir_all(&destpath) {
-            warn!("Unable to create folder {}: {}", destpath.display(), e);
+        if let Err(e) = fs::create_dir_all(&dest_path) {
+            warn!("Unable to create folder {}: {}", dest_path.display(), e);
             record_entry_failures(
                 &mut failures,
                 &entry,
-                &destpath,
+                &dest_path,
                 &format!("unable to create destination directory: {e}"),
             );
             continue;
@@ -856,71 +1138,26 @@ pub fn process(
         match mount_part(entry.partition.as_str(), &mntpath, active_slot) {
             Ok(mounted) => {
                 record_partition_source(&mut partitions, &entry.partition, mounted.source());
-                debug!(
-                    "Processing firmware files from partition {}",
-                    entry.partition.as_str()
+                debug!("Processing items from partition {}", entry.partition);
+                let source_base = mounted.path().join(entry.from.as_deref().unwrap_or(""));
+                process_items(
+                    &entry.files,
+                    ItemKind::File,
+                    &source_base,
+                    &dest_path,
+                    &entry.partition,
+                    &mut failures,
+                    &mut entries,
                 );
-                for file in &entry.files {
-                    let origin = mounted.path().join(&entry.origin).join(&file.name);
-                    let destination = firmware_destination(&destpath, file);
-                    if !origin.exists() {
-                        warn!(
-                            "Unable to find {} on partition {}",
-                            file.name, entry.partition
-                        );
-                        record_file_failure(
-                            &mut failures,
-                            &entry.partition,
-                            &origin,
-                            &destination,
-                            file.required,
-                            "source file does not exist",
-                        );
-                        continue;
-                    }
-
-                    debug!("Copying firmware file {}", origin.display());
-
-                    if file.name.ends_with(".mdt") {
-                        trace!("Squashing MDT file into MBN");
-                        if let Err(e) = squash_file(&origin, &destination) {
-                            let _ = fs::remove_file(&destination);
-                            warn!(
-                                "Unable to squash {} to {}: {}",
-                                origin.display(),
-                                destination.display(),
-                                e
-                            );
-                            record_file_failure(
-                                &mut failures,
-                                &entry.partition,
-                                &origin,
-                                &destination,
-                                file.required,
-                                format!("unable to squash MDT: {e}"),
-                            );
-                            continue;
-                        }
-                    } else if let Err(e) = fs::copy(&origin, &destination) {
-                        warn!(
-                            "Unable to copy {} to {}: {}",
-                            origin.display(),
-                            destination.display(),
-                            e
-                        );
-                        record_file_failure(
-                            &mut failures,
-                            &entry.partition,
-                            &origin,
-                            &destination,
-                            file.required,
-                            format!("unable to copy file: {e}"),
-                        );
-                        continue;
-                    }
-
-                    files.push(format!("{}", destination.display()));
-                }
+                process_items(
+                    &entry.dirs,
+                    ItemKind::Dir,
+                    &source_base,
+                    &dest_path,
+                    &entry.partition,
+                    &mut failures,
+                    &mut entries,
+                );
                 mounted.cleanup();
             }
             Err(e) => {
@@ -928,162 +1165,15 @@ pub fn process(
                 record_entry_failures(
                     &mut failures,
                     &entry,
-                    &destpath,
+                    &dest_path,
                     &format!("unable to mount source partition: {e}"),
                 );
             }
         }
     }
 
-    if let Some(dirs) = config.folders {
-        // Without overwrite, copying onto an existing folder fails; the folder
-        // is then absent from the new status and remove_stale_entries deletes
-        // it on the next run, so a populated tree destroys itself.
-        let options = dir::CopyOptions::new().overwrite(true);
-        let mut folder_list = Vec::new();
-
-        for entry in dirs {
-            if !kernel_filter_match(
-                &entry.kernel,
-                running_kernel.as_ref(),
-                "folder",
-                &entry.partition,
-            ) {
-                continue;
-            }
-
-            let destpath = PathBuf::from(entry.destination);
-
-            if let Err(e) = fs::create_dir_all(&destpath) {
-                warn!("Unable to create folder {}: {}", destpath.display(), e);
-                continue;
-            }
-
-            let mntpath = mounts_dir.join(&entry.partition);
-
-            let mounted = mount_part(entry.partition.as_str(), &mntpath, active_slot)?;
-            record_partition_source(&mut partitions, &entry.partition, mounted.source());
-            debug!(
-                "Processing folders from partition {}",
-                entry.partition.as_str()
-            );
-            for folder in entry.folders {
-                let origin = mounted.path().join(&folder.name);
-                if !origin.exists() {
-                    warn!(
-                        "Unable to find {} on partition {}",
-                        folder.name, entry.partition
-                    );
-                    continue;
-                }
-
-                debug!("Copying folder {}", origin.display());
-
-                if let Err(e) = dir::copy(&origin, &destpath, &options) {
-                    warn!(
-                        "Unable to copy {} to {}: {}",
-                        origin.display(),
-                        destpath.display(),
-                        e
-                    );
-                    continue;
-                }
-
-                let mut destination = PathBuf::from(&destpath).join(origin.file_name().unwrap());
-                if let Some(new_name) = folder.rename {
-                    let initial_folder = PathBuf::from(&destination);
-                    destination.set_file_name(&new_name);
-                    let _ = fs::rename(initial_folder, &destination);
-                }
-                folder_list.push(format!("{}", destination.display()));
-            }
-
-            for file in entry.files {
-                let origin = mounted.path().join(&file.name);
-                if !origin.exists() {
-                    if file.required {
-                        let err_str = format!(
-                            "Required file {} not found on partition {}",
-                            file.name, entry.partition
-                        );
-                        error!("{err_str}");
-                        return Err(Error::new(ErrorKind::NotFound, err_str));
-                    }
-                    warn!(
-                        "Unable to find {} on partition {}",
-                        file.name, entry.partition
-                    );
-                    continue;
-                }
-
-                let target = match &file.rename {
-                    Some(new_name) => destpath.join(new_name),
-                    None => destpath.join(origin.file_name().unwrap()),
-                };
-
-                debug!("Copying file {} to {}", origin.display(), target.display());
-
-                if let Err(e) = fs::copy(&origin, &target) {
-                    warn!(
-                        "Unable to copy {} to {}: {}",
-                        origin.display(),
-                        target.display(),
-                        e
-                    );
-                    continue;
-                }
-
-                folder_list.push(format!("{}", target.display()));
-            }
-
-            mounted.cleanup();
-        }
-
-        if !folder_list.is_empty() {
-            folders = Some(folder_list);
-        }
-    }
-
-    if let Some(dumps) = config.partdump {
-        for entry in dumps {
-            if !kernel_filter_match(
-                &entry.kernel,
-                running_kernel.as_ref(),
-                "partdump",
-                &entry.partition,
-            ) {
-                continue;
-            }
-
-            debug!(
-                "Processing partition {} for raw dump",
-                entry.partition.as_str()
-            );
-            let destpath = PathBuf::from(extract_path).join(&entry.destination);
-            if let Err(e) = fs::create_dir_all(&destpath) {
-                warn!("Unable to create folder {}: {}", destpath.display(), e);
-                continue;
-            }
-
-            let partlabel_dir = Path::new(PARTLABEL_DIR);
-            let origin = select_partition_path(&entry.partition, active_slot, &[partlabel_dir])?;
-            record_partition_source(&mut partitions, &entry.partition, &origin);
-
-            let destination = destpath.join(entry.filename);
-            let mut buffer: Vec<u8> = Vec::new();
-            let mut input = fs::File::open(origin)?;
-            let mut output = fs::File::create(&destination)?;
-
-            input.read_to_end(&mut buffer)?;
-            output.write_all(buffer.as_slice())?;
-
-            files.push(format!("{}", destination.display()));
-        }
-    }
-
     Ok(Status {
-        files,
-        folders,
+        entries,
         kernel_release: running_kernel_release.map(str::to_string),
         active_slot: active_slot.map(|slot| slot.suffix().to_string()),
         partitions,
@@ -1166,35 +1256,516 @@ mod tests {
     }
 
     #[test]
-    fn kernel_filter_range_matching() {
-        let running = parse_kernel_version("6.17.0").unwrap();
-        let old_path_filter = Some(KernelConstraint {
-            lt: Some("7.0".to_string()),
-            lte: None,
-            gt: None,
-            gte: None,
-            eq: None,
-        });
-        let new_path_filter = Some(KernelConstraint {
-            lt: None,
-            lte: None,
-            gt: None,
-            gte: Some("7.0".to_string()),
-            eq: None,
-        });
+    fn parses_kernel_constraints() {
+        assert_eq!(
+            parse_constraint("<6.1"),
+            Some((
+                ConstraintOp::Lt,
+                KernelVersion {
+                    major: 6,
+                    minor: 1,
+                    patch: 0,
+                }
+            ))
+        );
+        assert_eq!(
+            parse_constraint("<=6.1"),
+            Some((
+                ConstraintOp::Lte,
+                KernelVersion {
+                    major: 6,
+                    minor: 1,
+                    patch: 0,
+                }
+            ))
+        );
+        assert_eq!(
+            parse_constraint(">7.0"),
+            Some((
+                ConstraintOp::Gt,
+                KernelVersion {
+                    major: 7,
+                    minor: 0,
+                    patch: 0,
+                }
+            ))
+        );
+        assert_eq!(
+            parse_constraint(">=7.0"),
+            Some((
+                ConstraintOp::Gte,
+                KernelVersion {
+                    major: 7,
+                    minor: 0,
+                    patch: 0,
+                }
+            ))
+        );
+        assert_eq!(
+            parse_constraint("=5.4"),
+            Some((
+                ConstraintOp::Eq,
+                KernelVersion {
+                    major: 5,
+                    minor: 4,
+                    patch: 0,
+                }
+            ))
+        );
+        assert_eq!(parse_constraint("7.0"), None);
+        assert_eq!(parse_constraint(""), None);
+        assert_eq!(parse_constraint("<bogus"), None);
+    }
 
-        assert!(kernel_filter_match(
-            &old_path_filter,
-            Some(&running),
-            "firmware",
-            "modem"
-        ));
-        assert!(!kernel_filter_match(
-            &new_path_filter,
-            Some(&running),
-            "firmware",
-            "modem"
-        ));
+    #[test]
+    fn constraint_operators_match_against_running_kernel() {
+        let running = parse_kernel_version("6.6.30").unwrap();
+
+        assert!(constraint_matches(running, "<7.0"));
+        assert!(!constraint_matches(running, "<=6.5"));
+        assert!(constraint_matches(running, ">6.5"));
+        assert!(constraint_matches(running, ">=6.6"));
+        assert!(constraint_matches(running, "=6.6.30"));
+        assert!(!constraint_matches(running, "=6.7"));
+        assert!(constraint_matches(running, "*"));
+        assert!(!constraint_matches(running, "bogus"));
+    }
+
+    fn kernel_dest(pairs: &[(&str, &str)]) -> Dest {
+        Dest::ByKernel(
+            pairs
+                .iter()
+                .map(|(constraint, path)| (constraint.to_string(), path.to_string()))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn kernel_map_first_match_in_document_order_wins() {
+        let dest = kernel_dest(&[("<7.0", "qcom/old"), (">=7.0", "qcom/new")]);
+        let old = parse_kernel_version("6.17.0").unwrap();
+        let new = parse_kernel_version("7.2.0").unwrap();
+
+        assert_eq!(
+            resolve_destination(&dest, Some(old), "modem").as_deref(),
+            Some("qcom/old")
+        );
+        assert_eq!(
+            resolve_destination(&dest, Some(new), "modem").as_deref(),
+            Some("qcom/new")
+        );
+    }
+
+    #[test]
+    fn kernel_map_catch_all_matches_every_kernel() {
+        let dest = kernel_dest(&[("<7.0", "qcom/old"), ("*", "qcom/fallback")]);
+        let new = parse_kernel_version("7.2.0").unwrap();
+        assert_eq!(
+            resolve_destination(&dest, Some(new), "modem").as_deref(),
+            Some("qcom/fallback")
+        );
+
+        let dest = kernel_dest(&[("*", "qcom/fallback"), ("<7.0", "qcom/old")]);
+        let old = parse_kernel_version("6.17.0").unwrap();
+        assert_eq!(
+            resolve_destination(&dest, Some(old), "modem").as_deref(),
+            Some("qcom/fallback")
+        );
+    }
+
+    #[test]
+    fn kernel_map_without_match_skips_entry() {
+        let dest = kernel_dest(&[("<7.0", "qcom/old")]);
+        let new = parse_kernel_version("7.2.0").unwrap();
+
+        assert_eq!(resolve_destination(&dest, Some(new), "modem"), None);
+        assert_eq!(resolve_destination(&dest, None, "modem"), None);
+    }
+
+    #[test]
+    fn fixed_to_always_resolves() {
+        let dest = Dest::Fixed("qcom/device".to_string());
+
+        assert_eq!(
+            resolve_destination(&dest, None, "modem").as_deref(),
+            Some("qcom/device")
+        );
+    }
+
+    #[test]
+    fn relative_to_resolves_against_extract_path_absolute_verbatim() {
+        assert_eq!(
+            destination_path("qcom/device", "/lib/firmware/updates"),
+            PathBuf::from("/lib/firmware/updates/qcom/device")
+        );
+        assert_eq!(
+            destination_path("/var/lib/blob-wrangler/sensors", "/lib/firmware/updates"),
+            PathBuf::from("/var/lib/blob-wrangler/sensors")
+        );
+        assert_eq!(
+            destination_path(".", "/lib/firmware/updates"),
+            PathBuf::from("/lib/firmware/updates")
+        );
+    }
+
+    #[test]
+    fn items_accept_bare_strings_and_mappings() {
+        let items: Vec<Item> = serde_norway::from_str(
+            "- adsp.mdt\n- { from: sns_reg_config, to: sensors/sns_reg.conf, required: true }\n",
+        )
+        .unwrap();
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].from(), "adsp.mdt");
+        assert_eq!(items[0].to(), None);
+        assert!(!items[0].required());
+        assert_eq!(items[1].from(), "sns_reg_config");
+        assert_eq!(items[1].to(), Some("sensors/sns_reg.conf"));
+        assert!(items[1].required());
+    }
+
+    #[test]
+    fn unknown_keys_are_rejected() {
+        assert!(
+            serde_norway::from_str::<Entry>("partition: vendor\nto: qcom\norigin: firmware")
+                .is_err()
+        );
+        assert!(serde_norway::from_str::<Config>("dynpart: system\nextract: []").is_err());
+        assert!(serde_norway::from_str::<Config>("dynamic-partition: system\nextract: []").is_ok());
+    }
+
+    #[test]
+    fn raw_entry_rejects_from_files_and_dirs() {
+        let entry: Entry =
+            serde_norway::from_str("partition: waveform\nraw: true\nto: rockchip/ebc.wbf").unwrap();
+        assert!(entry.validate().is_ok());
+
+        for extra in ["from: image", "files: [adsp.mdt]", "dirs: [image]"] {
+            let text = format!("partition: waveform\nraw: true\nto: rockchip/ebc.wbf\n{extra}\n");
+            let entry: Entry = serde_norway::from_str(&text).unwrap();
+            assert!(
+                entry.validate().is_err(),
+                "raw entry with '{extra}' must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn raw_entry_failures_are_always_required() {
+        let entry: Entry = serde_norway::from_str(
+            "partition: blob-wrangler-no-such-partition\nraw: true\nto: rockchip/ebc.wbf",
+        )
+        .unwrap();
+        let mut partitions = Vec::new();
+        let mut failures = Vec::new();
+        let mut extracted = Vec::new();
+
+        dump_raw_entry(
+            &entry,
+            Path::new("/tmp/blob-wrangler-no-such-partition.wbf"),
+            None,
+            &mut partitions,
+            &mut failures,
+            &mut extracted,
+        );
+
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].required);
+        assert!(extracted.is_empty());
+
+        let status = Status {
+            entries: extracted,
+            kernel_release: None,
+            active_slot: None,
+            partitions,
+            failures,
+        };
+        assert!(status.has_required_failures());
+    }
+
+    #[test]
+    fn crosshatch_config_uses_kernel_conditional_paths_and_required_files() {
+        let config: Config =
+            serde_norway::from_str(include_str!("../configs/google,crosshatch.yaml")).unwrap();
+        let running = parse_kernel_version("7.2.0").unwrap();
+        let old = parse_kernel_version("6.17.0").unwrap();
+
+        assert_eq!(config.dynpart.as_deref(), Some("system"));
+        assert!(
+            config
+                .extract
+                .iter()
+                .all(|entry| !entry.files.iter().any(|item| item.from() == "ftm5_fw.ftb"))
+        );
+
+        let destinations_for = |kernel: Option<KernelVersion>| -> Vec<String> {
+            config
+                .extract
+                .iter()
+                .filter_map(|entry| resolve_destination(&entry.to, kernel, &entry.partition))
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            destinations_for(Some(running)),
+            [
+                "qcom/sdm845/Google/blueline",
+                "qca",
+                "qca",
+                "qcom/sdm845/Google/blueline",
+            ]
+        );
+
+        let old_destinations = destinations_for(Some(old));
+        assert!(old_destinations.contains(&"qcom/sdm845/pixel3".to_string()));
+        assert!(old_destinations.contains(&"qca/pixel3".to_string()));
+        assert!(!old_destinations.contains(&"qcom/sdm845/Google/blueline".to_string()));
+
+        let required = config
+            .extract
+            .iter()
+            .flat_map(|entry| entry.files.iter())
+            .filter(|item| item.required())
+            .map(|item| item.from())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            required,
+            [
+                "a630_zap.mdt",
+                "adsp.mdt",
+                "cdsp.mdt",
+                "ipa_fws.mdt",
+                "venus.mdt",
+                "crnv21.bin",
+                "crbtfw21.tlv",
+                "mba.mbn",
+                "modem.mdt",
+            ]
+        );
+    }
+
+    #[test]
+    fn sargo_config_extracts_separate_stock_australian_carrier_profiles() {
+        let config: Config =
+            serde_norway::from_str(include_str!("../configs/google,sargo.yaml")).unwrap();
+        for (carrier_path, output) in [
+            ("Telstra/Commercial", "telstra-au-commercial.mbn"),
+            ("Optus/Commercial/AU", "optus-au-commercial.mbn"),
+        ] {
+            let origin =
+                format!("rfs/msm/mpss/readonly/vendor/mbn/mcfg_sw/generic/AUNZ/{carrier_path}");
+            let entries: Vec<_> = config
+                .extract
+                .iter()
+                .filter(|entry| entry.from.as_deref() == Some(origin.as_str()))
+                .collect();
+            assert_eq!(entries.len(), 1);
+            let entry = entries[0];
+            assert_eq!(entry.partition, "vendor");
+            assert_eq!(
+                resolve_destination(&entry.to, None, &entry.partition).as_deref(),
+                Some("qcom/sdm670/sargo/mcfg")
+            );
+            assert_eq!(entry.files.len(), 1);
+            assert_eq!(entry.files[0].from(), "mcfg_sw.mbn");
+            assert_eq!(entry.files[0].to(), Some(output));
+            assert!(!entry.files[0].required());
+        }
+    }
+
+    #[test]
+    fn fajita_config_collapses_kernel_split_pairs_into_single_entries() {
+        let config: Config =
+            serde_norway::from_str(include_str!("../configs/oneplus,fajita.yaml")).unwrap();
+
+        assert_eq!(config.extract.len(), 8);
+        assert_eq!(
+            config
+                .extract
+                .iter()
+                .filter(|entry| matches!(entry.to, Dest::ByKernel(_)))
+                .count(),
+            3
+        );
+    }
+
+    #[test]
+    fn every_device_config_parses() {
+        let configs_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("configs");
+        for dirent in fs::read_dir(configs_dir).unwrap() {
+            let path = dirent.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("yaml") {
+                continue;
+            }
+            let contents = fs::read_to_string(&path).unwrap();
+            serde_norway::from_str::<Config>(&contents)
+                .unwrap_or_else(|e| panic!("unable to parse {}: {e}", path.display()));
+        }
+    }
+
+    #[test]
+    fn file_failure_records_final_mbn_destination() {
+        let item = Item::Spec {
+            from: "adsp.mdt".to_string(),
+            to: None,
+            required: true,
+        };
+        let destination =
+            item_destination(Path::new("/updates/qcom/device"), &item, ItemKind::File);
+        assert_eq!(destination, PathBuf::from("/updates/qcom/device/adsp.mbn"));
+
+        let mut failures = Vec::new();
+        record_file_failure(
+            &mut failures,
+            "vendor",
+            Path::new("/vendor/firmware/adsp.mdt"),
+            &destination,
+            true,
+            "source does not exist",
+        );
+
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].destination, "/updates/qcom/device/adsp.mbn");
+        assert!(failures[0].required);
+    }
+
+    #[test]
+    fn renamed_mdt_files_still_land_as_mbn() {
+        let item = Item::Spec {
+            from: "vpu20_1v.mdt".to_string(),
+            to: Some("venus.mdt".to_string()),
+            required: false,
+        };
+
+        assert_eq!(
+            item_destination(Path::new("/updates/qcom/device"), &item, ItemKind::File),
+            PathBuf::from("/updates/qcom/device/venus.mbn")
+        );
+    }
+
+    #[test]
+    fn dir_items_are_named_after_to_or_the_source_directory() {
+        let renamed = Item::Spec {
+            from: "etc/acdbdata".to_string(),
+            to: Some("acdb".to_string()),
+            required: false,
+        };
+        let bare = Item::Path("etc/sensors".to_string());
+
+        assert_eq!(
+            item_destination(Path::new("/var/lib/sensors"), &renamed, ItemKind::Dir),
+            PathBuf::from("/var/lib/sensors/acdb")
+        );
+        assert_eq!(
+            item_destination(Path::new("/var/lib/sensors"), &bare, ItemKind::Dir),
+            PathBuf::from("/var/lib/sensors/sensors")
+        );
+    }
+
+    #[test]
+    fn dir_items_land_at_the_same_path_on_rerun() {
+        let root = TestRoots::new();
+        let source_base = root.base.join("source");
+        let source_dir = source_base.join("etc/acdbdata");
+        fs::create_dir_all(&source_dir).unwrap();
+        let source_file = source_dir.join("acdb.bin");
+
+        let dest = root.base.join("dest");
+        let item = Item::Spec {
+            from: "etc/acdbdata".to_string(),
+            to: Some("acdb".to_string()),
+            required: false,
+        };
+        let mut extracted = Vec::new();
+
+        for contents in [b"first".as_slice(), b"second".as_slice()] {
+            fs::write(&source_file, contents).unwrap();
+
+            let mut failures = Vec::new();
+            process_items(
+                std::slice::from_ref(&item),
+                ItemKind::Dir,
+                &source_base,
+                &dest,
+                "vendor",
+                &mut failures,
+                &mut extracted,
+            );
+            assert!(failures.is_empty());
+
+            assert!(dest.join("acdb/acdb.bin").exists());
+            assert!(!dest.join("acdb/acdbdata").exists());
+            assert_eq!(
+                extracted.last().unwrap(),
+                &dest.join("acdb").display().to_string()
+            );
+        }
+
+        assert_eq!(fs::read(dest.join("acdb/acdb.bin")).unwrap(), b"second");
+        assert_eq!(extracted.len(), 2);
+    }
+
+    #[test]
+    fn entry_failure_preserves_declared_required_flags() {
+        let entry = Entry {
+            partition: "vendor".to_string(),
+            from: Some("firmware".to_string()),
+            to: Dest::Fixed("qcom/device".to_string()),
+            raw: false,
+            files: vec![
+                Item::Spec {
+                    from: "optional.bin".to_string(),
+                    to: None,
+                    required: false,
+                },
+                Item::Spec {
+                    from: "required.bin".to_string(),
+                    to: None,
+                    required: true,
+                },
+            ],
+            dirs: Vec::new(),
+        };
+        let mut failures = Vec::new();
+
+        record_entry_failures(
+            &mut failures,
+            &entry,
+            Path::new("/updates/qcom/device"),
+            "unable to mount source partition",
+        );
+
+        assert_eq!(
+            failures
+                .iter()
+                .map(|failure| failure.required)
+                .collect::<Vec<_>>(),
+            [false, true]
+        );
+        assert_eq!(failures[0].source, "vendor/firmware/optional.bin");
+        assert_eq!(failures[0].destination, "/updates/qcom/device/optional.bin");
+    }
+
+    #[test]
+    fn required_failures_are_distinguished_from_optional_failures() {
+        let failure = |required| FileFailure {
+            partition: "vendor".to_string(),
+            source: "vendor/firmware/adsp.mdt".to_string(),
+            destination: "/lib/firmware/updates/adsp.mbn".to_string(),
+            required,
+            error: "source does not exist".to_string(),
+        };
+        let mut status = Status {
+            entries: Vec::new(),
+            kernel_release: Some("7.2.0".to_string()),
+            active_slot: Some("_a".to_string()),
+            partitions: Vec::new(),
+            failures: vec![failure(false)],
+        };
+        assert!(!status.has_required_failures());
+
+        status.failures.push(failure(true));
+        assert!(status.has_required_failures());
     }
 
     #[test]
@@ -1307,234 +1878,6 @@ mod tests {
             dynpart_paths("system", Some(Slot::B), &roots.partlabel).unwrap(),
             [part_b]
         );
-    }
-
-    #[derive(Deserialize)]
-    struct ConfigFile {
-        wrangler: Config,
-    }
-
-    #[test]
-    fn crosshatch_config_uses_kernel_7_paths_and_required_files() {
-        let config: ConfigFile =
-            toml::from_str(include_str!("../configs/google,crosshatch.toml")).unwrap();
-        let config = config.wrangler;
-        let running = parse_kernel_version("7.2.0").unwrap();
-
-        assert_eq!(config.dynpart.as_deref(), Some("system"));
-        assert!(
-            config
-                .firmware
-                .iter()
-                .all(|entry| { !entry.files.iter().any(|file| file.name == "ftm5_fw.ftb") })
-        );
-
-        let qcom_entries = config
-            .firmware
-            .iter()
-            .filter(|entry| {
-                kernel_filter_match(&entry.kernel, Some(&running), "firmware", &entry.partition)
-                    && entry.destination.starts_with("qcom/")
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(qcom_entries.len(), 2);
-        assert!(
-            qcom_entries
-                .iter()
-                .all(|entry| { entry.destination == "qcom/sdm845/Google/blueline" })
-        );
-
-        let required = config
-            .firmware
-            .iter()
-            .filter(|entry| {
-                kernel_filter_match(&entry.kernel, Some(&running), "firmware", &entry.partition)
-            })
-            .flat_map(|entry| entry.files.iter())
-            .filter(|file| file.required)
-            .map(|file| file.name.as_str())
-            .collect::<Vec<_>>();
-        assert_eq!(
-            required,
-            [
-                "a630_zap.mdt",
-                "adsp.mdt",
-                "cdsp.mdt",
-                "ipa_fws.mdt",
-                "venus.mdt",
-                "crnv21.bin",
-                "crbtfw21.tlv",
-                "mba.mbn",
-                "modem.mdt",
-            ]
-        );
-
-        let old_kernel = parse_kernel_version("6.17.0").unwrap();
-        let old_destinations = config
-            .firmware
-            .iter()
-            .filter(|entry| {
-                kernel_filter_match(
-                    &entry.kernel,
-                    Some(&old_kernel),
-                    "firmware",
-                    &entry.partition,
-                )
-            })
-            .map(|entry| entry.destination.as_str())
-            .collect::<Vec<_>>();
-        assert!(old_destinations.contains(&"qcom/sdm845/pixel3"));
-        assert!(old_destinations.contains(&"qca/pixel3"));
-        assert!(!old_destinations.contains(&"qcom/sdm845/Google/blueline"));
-    }
-
-    #[test]
-    fn sargo_config_extracts_separate_stock_australian_carrier_profiles() {
-        let config: ConfigFile =
-            toml::from_str(include_str!("../configs/google,sargo.toml")).unwrap();
-        for (carrier_path, output) in [
-            ("Telstra/Commercial", "telstra-au-commercial.mbn"),
-            ("Optus/Commercial/AU", "optus-au-commercial.mbn"),
-        ] {
-            let origin =
-                format!("rfs/msm/mpss/readonly/vendor/mbn/mcfg_sw/generic/AUNZ/{carrier_path}");
-            let entries: Vec<_> = config
-                .wrangler
-                .firmware
-                .iter()
-                .filter(|entry| entry.origin == origin)
-                .collect();
-            assert_eq!(entries.len(), 1);
-            let entry = entries[0];
-            assert_eq!(entry.partition, "vendor");
-            assert_eq!(entry.destination, "qcom/sdm670/sargo/mcfg");
-            assert_eq!(entry.files.len(), 1);
-            assert_eq!(entry.files[0].name, "mcfg_sw.mbn");
-            assert_eq!(entry.files[0].rename.as_deref(), Some(output));
-            assert!(!entry.files[0].required);
-        }
-    }
-
-    #[test]
-    fn every_device_config_parses() {
-        for contents in [
-            include_str!("../configs/fairphone,fp4.toml"),
-            include_str!("../configs/fairphone,fp5.toml"),
-            include_str!("../configs/google,blueline.toml"),
-            include_str!("../configs/google,bonito-sdc.toml"),
-            include_str!("../configs/google,crosshatch.toml"),
-            include_str!("../configs/google,sargo.toml"),
-            include_str!("../configs/google,sunfish.toml"),
-            include_str!("../configs/nothing,spacewar.toml"),
-            include_str!("../configs/oneplus,enchilada.toml"),
-            include_str!("../configs/oneplus,fajita.toml"),
-            include_str!("../configs/pine64,pinenote.toml"),
-            include_str!("../configs/samsung,starqltechn.toml"),
-            include_str!("../configs/shift,axolotl.toml"),
-            include_str!("../configs/shift,otter.toml"),
-            include_str!("../configs/xiaomi,beryllium.toml"),
-            include_str!("../configs/xiaomi,davinci.toml"),
-            include_str!("../configs/xiaomi,polaris.toml"),
-        ] {
-            toml::from_str::<ConfigFile>(contents).unwrap();
-        }
-    }
-
-    #[test]
-    fn file_failure_records_final_mbn_destination() {
-        let file = FwFile {
-            name: "adsp.mdt".to_string(),
-            rename: None,
-            required: true,
-        };
-        let mut failures = Vec::new();
-        let destination = firmware_destination(Path::new("/updates/qcom/device"), &file);
-        record_file_failure(
-            &mut failures,
-            "vendor",
-            Path::new("/vendor/firmware/adsp.mdt"),
-            &destination,
-            true,
-            "source file does not exist",
-        );
-
-        assert_eq!(failures.len(), 1);
-        assert_eq!(failures[0].destination, "/updates/qcom/device/adsp.mbn");
-        assert!(failures[0].required);
-    }
-
-    #[test]
-    fn entry_failure_preserves_declared_required_flags() {
-        let entry = FwConfig {
-            partition: "vendor".to_string(),
-            origin: "firmware".to_string(),
-            destination: "qcom/device".to_string(),
-            kernel: None,
-            files: vec![
-                FwFile {
-                    name: "optional.bin".to_string(),
-                    rename: None,
-                    required: false,
-                },
-                FwFile {
-                    name: "required.bin".to_string(),
-                    rename: None,
-                    required: true,
-                },
-            ],
-        };
-        let mut failures = Vec::new();
-
-        record_entry_failures(
-            &mut failures,
-            &entry,
-            Path::new("/updates/qcom/device"),
-            "unable to mount source partition",
-        );
-
-        assert_eq!(
-            failures
-                .iter()
-                .map(|failure| failure.required)
-                .collect::<Vec<_>>(),
-            [false, true]
-        );
-    }
-
-    #[test]
-    fn old_status_json_remains_readable() {
-        let status: Status = serde_json::from_str(
-            r#"{"files":["/firmware/adsp.mbn"],"folders":null,"kernel_release":"7.2.0"}"#,
-        )
-        .unwrap();
-
-        assert_eq!(status.active_slot, None);
-        assert!(status.partitions.is_empty());
-        assert!(status.failures.is_empty());
-        assert!(!status.has_required_failures());
-    }
-
-    #[test]
-    fn required_failures_are_distinguished_from_optional_failures() {
-        let failure = |required| FileFailure {
-            partition: "vendor".to_string(),
-            source: "vendor/firmware/adsp.mdt".to_string(),
-            destination: "/lib/firmware/updates/adsp.mbn".to_string(),
-            required,
-            error: "source file does not exist".to_string(),
-        };
-        let mut status = Status {
-            files: Vec::new(),
-            folders: None,
-            kernel_release: Some("7.2.0".to_string()),
-            active_slot: Some("_a".to_string()),
-            partitions: Vec::new(),
-            failures: vec![failure(false)],
-        };
-        assert!(!status.has_required_failures());
-
-        status.failures.push(failure(true));
-        assert!(status.has_required_failures());
     }
 
     #[test]

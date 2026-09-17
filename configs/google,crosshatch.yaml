@@ -1,0 +1,44 @@
+dynamic-partition: system
+
+extract:
+  - partition: vendor
+    from: firmware
+    to:
+      "<7.0":  qcom/sdm845/pixel3
+      ">=7.0": qcom/sdm845/Google/blueline
+    files:
+      - { from: a630_zap.mdt, required: true }
+      - { from: adsp.mdt, required: true }
+      - adspr.jsn
+      - adspua.jsn
+      - { from: cdsp.mdt, required: true }
+      - cdspr.jsn
+      - { from: ipa_fws.mdt, required: true }
+      - modemuw.jsn
+      - slpi.mdt
+      - { from: venus.mdt, required: true }
+      - wlanmdsp.mbn
+
+  - partition: vendor
+    from: firmware
+    to:
+      "<7.0":  qca/pixel3
+      ">=7.0": qca
+    files:
+      - { from: crnv21.bin, required: true }
+
+  - partition: vendor
+    from: firmware
+    to: qca
+    files:
+      - { from: crbtfw21.tlv, required: true }
+
+  - partition: modem
+    from: image
+    to:
+      "<7.0":  qcom/sdm845/pixel3
+      ">=7.0": qcom/sdm845/Google/blueline
+    files:
+      - { from: mba.mbn, required: true }
+      - { from: modem.mdt, required: true }
+      - modemr.jsn
