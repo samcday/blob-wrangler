@@ -374,19 +374,17 @@ fn parse_kernel_version(version: &str) -> Option<KernelVersion> {
 
 /// Parse a `to:` map key such as `"<7.0"` into an operator plus version.
 fn parse_constraint(constraint: &str) -> Option<(ConstraintOp, KernelVersion)> {
-    let (op, value) = if let Some(value) = constraint.strip_prefix("<=") {
-        (ConstraintOp::Lte, value)
-    } else if let Some(value) = constraint.strip_prefix('<') {
-        (ConstraintOp::Lt, value)
-    } else if let Some(value) = constraint.strip_prefix(">=") {
-        (ConstraintOp::Gte, value)
-    } else if let Some(value) = constraint.strip_prefix('>') {
-        (ConstraintOp::Gt, value)
-    } else if let Some(value) = constraint.strip_prefix('=') {
-        (ConstraintOp::Eq, value)
-    } else {
-        return None;
-    };
+    // Two-character prefixes must be tried before their one-character
+    // prefix, so `<=` wins over `<` and `>=` over `>`.
+    let (op, value) = [
+        ("<=", ConstraintOp::Lte),
+        ("<", ConstraintOp::Lt),
+        (">=", ConstraintOp::Gte),
+        (">", ConstraintOp::Gt),
+        ("=", ConstraintOp::Eq),
+    ]
+    .into_iter()
+    .find_map(|(prefix, op)| constraint.strip_prefix(prefix).map(|value| (op, value)))?;
 
     Some((op, parse_kernel_version(value)?))
 }
@@ -839,15 +837,14 @@ fn copy_file_item(source: &Path, destination: &Path, squash: bool) -> Result<(),
 }
 
 /// Copy a directory tree so that it lands exactly at `destination`, whatever
-/// the source directory is called.
+/// the source directory is called. The destination is created first because
+/// `content_only` copies into an existing tree root rather than creating it.
 fn copy_dir_item(
     source: &Path,
     destination: &Path,
     options: &dir::CopyOptions,
 ) -> Result<(), Error> {
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)?;
-    }
+    fs::create_dir_all(destination)?;
     dir::copy(source, destination, options).map_err(Error::other)?;
 
     Ok(())
@@ -920,10 +917,12 @@ fn process_items(
 ) {
     // Without overwrite, copying onto an existing folder fails; the folder
     // is then absent from the new status and remove_stale_entries deletes
-    // it on the next run, so a populated tree destroys itself. copy_inside
-    // makes the destination the tree itself rather than its parent, which
-    // is what lets `to:` rename a directory without a staging copy.
-    let options = dir::CopyOptions::new().overwrite(true).copy_inside(true);
+    // it on the next run, so a populated tree destroys itself. content_only
+    // always treats the destination as the tree root, existing or not, so
+    // `to:` can rename a directory without a staging copy and a rerun
+    // refreshes the same path instead of nesting the source directory name
+    // inside it (which is what copy_inside does once the destination exists).
+    let options = dir::CopyOptions::new().overwrite(true).content_only(true);
 
     for item in items {
         let source = source_base.join(item.from());
@@ -1017,12 +1016,14 @@ fn dump_raw_entry(
         Ok(origin) => origin,
         Err(e) => {
             warn!("Unable to find partition {}: {e}", entry.partition);
+            // Raw entries have no per-item required flag; a missing block
+            // device or a failed dump must never count as a successful run.
             record_file_failure(
                 failures,
                 &entry.partition,
                 Path::new(&entry.partition),
                 destination,
-                false,
+                true,
                 format!("unable to find partition: {e}"),
             );
             return;
@@ -1042,7 +1043,7 @@ fn dump_raw_entry(
             &entry.partition,
             &origin,
             destination,
-            false,
+            true,
             format!("unable to dump partition: {e}"),
         );
         return;
@@ -1450,6 +1451,39 @@ mod tests {
     }
 
     #[test]
+    fn raw_entry_failures_are_always_required() {
+        let entry: Entry = serde_norway::from_str(
+            "partition: blob-wrangler-no-such-partition\nraw: true\nto: rockchip/ebc.wbf",
+        )
+        .unwrap();
+        let mut partitions = Vec::new();
+        let mut failures = Vec::new();
+        let mut extracted = Vec::new();
+
+        dump_raw_entry(
+            &entry,
+            Path::new("/tmp/blob-wrangler-no-such-partition.wbf"),
+            None,
+            &mut partitions,
+            &mut failures,
+            &mut extracted,
+        );
+
+        assert_eq!(failures.len(), 1);
+        assert!(failures[0].required);
+        assert!(extracted.is_empty());
+
+        let status = Status {
+            entries: extracted,
+            kernel_release: None,
+            active_slot: None,
+            partitions,
+            failures,
+        };
+        assert!(status.has_required_failures());
+    }
+
+    #[test]
     fn crosshatch_config_uses_kernel_conditional_paths_and_required_files() {
         let config: Config =
             serde_norway::from_str(include_str!("../configs/google,crosshatch.yaml")).unwrap();
@@ -1626,6 +1660,49 @@ mod tests {
             item_destination(Path::new("/var/lib/sensors"), &bare, ItemKind::Dir),
             PathBuf::from("/var/lib/sensors/sensors")
         );
+    }
+
+    #[test]
+    fn dir_items_land_at_the_same_path_on_rerun() {
+        let root = TestRoots::new();
+        let source_base = root.base.join("source");
+        let source_dir = source_base.join("etc/acdbdata");
+        fs::create_dir_all(&source_dir).unwrap();
+        let source_file = source_dir.join("acdb.bin");
+
+        let dest = root.base.join("dest");
+        let item = Item::Spec {
+            from: "etc/acdbdata".to_string(),
+            to: Some("acdb".to_string()),
+            required: false,
+        };
+        let mut extracted = Vec::new();
+
+        for contents in [b"first".as_slice(), b"second".as_slice()] {
+            fs::write(&source_file, contents).unwrap();
+
+            let mut failures = Vec::new();
+            process_items(
+                std::slice::from_ref(&item),
+                ItemKind::Dir,
+                &source_base,
+                &dest,
+                "vendor",
+                &mut failures,
+                &mut extracted,
+            );
+            assert!(failures.is_empty());
+
+            assert!(dest.join("acdb/acdb.bin").exists());
+            assert!(!dest.join("acdb/acdbdata").exists());
+            assert_eq!(
+                extracted.last().unwrap(),
+                &dest.join("acdb").display().to_string()
+            );
+        }
+
+        assert_eq!(fs::read(dest.join("acdb/acdb.bin")).unwrap(), b"second");
+        assert_eq!(extracted.len(), 2);
     }
 
     #[test]
