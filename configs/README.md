@@ -25,6 +25,13 @@ The config files contain a single section named `wrangler` with a mandatory
   * `rename` (optional): name to rename the file to
   * `required` (optional, default `false`): fail the extraction service after
     writing status diagnostics if this file is missing or cannot be copied.
+  * `keep_extension` (optional, default `false`): a split `.mdt` image is
+    squashed into a single file which is normally written with an `.mbn`
+    extension. Set this to write the squashed image under the `.mdt` name
+    instead (or under the `rename` value verbatim), for kernels whose driver
+    defaults request `wcnss.mdt`-style names because the device tree carries
+    no `firmware-name`. Binaries older than the release introducing this key
+    ignore it and still write `.mbn`.
 
 An optional `folders` key can be added to the config, in order to easily
 copy entire folders. It expects an array of "object" very similar to

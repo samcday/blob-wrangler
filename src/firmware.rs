@@ -130,6 +130,11 @@ pub struct FwFile {
     rename: Option<String>,
     #[serde(default)]
     required: bool,
+    /// Squashed `.mdt` files are written as `.mbn` by default. Drivers fall
+    /// back to the `.mdt` name when the device tree has no `firmware-name`,
+    /// so this keeps the original extension (or the `rename` value verbatim).
+    #[serde(default)]
+    keep_extension: bool,
 }
 
 #[derive(Deserialize)]
@@ -734,7 +739,7 @@ fn firmware_destination(destpath: &Path, file: &FwFile) -> PathBuf {
     if let Some(new_name) = &file.rename {
         destination.set_file_name(new_name);
     }
-    if file.name.ends_with(".mdt") {
+    if file.name.ends_with(".mdt") && !file.keep_extension {
         destination.set_extension("mbn");
     }
     destination
@@ -1416,6 +1421,107 @@ mod tests {
     }
 
     #[test]
+    fn keep_extension_preserves_the_mdt_name_of_squashed_firmware() {
+        let root = Path::new("/updates");
+        let squashed = FwFile {
+            name: "wcnss.mdt".to_string(),
+            rename: None,
+            required: false,
+            keep_extension: true,
+        };
+        assert_eq!(
+            firmware_destination(root, &squashed),
+            PathBuf::from("/updates/wcnss.mdt")
+        );
+
+        let renamed = FwFile {
+            name: "wcnss.mdt".to_string(),
+            rename: Some("pronto.mdt".to_string()),
+            required: false,
+            keep_extension: true,
+        };
+        assert_eq!(
+            firmware_destination(root, &renamed),
+            PathBuf::from("/updates/pronto.mdt")
+        );
+
+        let default = FwFile {
+            name: "wcnss.mdt".to_string(),
+            rename: Some("pronto.mdt".to_string()),
+            required: false,
+            keep_extension: false,
+        };
+        assert_eq!(
+            firmware_destination(root, &default),
+            PathBuf::from("/updates/pronto.mbn")
+        );
+    }
+
+    #[test]
+    fn a5u_eur_config_matches_the_kernel_default_firmware_names() {
+        let config: ConfigFile =
+            toml::from_str(include_str!("../configs/samsung,a5u-eur.toml")).unwrap();
+        let config = config.wrangler;
+        let root = Path::new("/updates");
+
+        assert!(config.dynpart.is_none());
+        assert!(config.folders.is_none());
+        assert!(config.partdump.is_none());
+        assert!(config.firmware.iter().all(|entry| entry.kernel.is_none()));
+
+        // The kernel-default names are squashed .mdt sources kept as .mdt,
+        // not plain copies of the split set.
+        let mut kept = config
+            .firmware
+            .iter()
+            .flat_map(|entry| entry.files.iter())
+            .filter(|file| file.keep_extension)
+            .map(|file| {
+                assert!(file.name.ends_with(".mdt"));
+                assert!(file.rename.is_none());
+                file.name.as_str()
+            })
+            .collect::<Vec<_>>();
+        kept.sort_unstable();
+        assert_eq!(kept, ["modem.mdt", "wcnss.mdt"]);
+
+        let mut outputs = config
+            .firmware
+            .iter()
+            .flat_map(|entry| {
+                let destpath = root.join(&entry.destination);
+                entry.files.iter().map(move |file| {
+                    assert!(!file.required);
+                    (
+                        entry.partition.as_str(),
+                        entry.origin.as_str(),
+                        firmware_destination(&destpath, file),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        outputs.sort();
+        assert_eq!(
+            outputs,
+            [
+                (
+                    "apnhlos",
+                    "image",
+                    PathBuf::from("/updates/qcom/venus-1.8/venus.mbn"),
+                ),
+                ("apnhlos", "image", PathBuf::from("/updates/wcnss.mdt")),
+                ("modem", "image", PathBuf::from("/updates/mba.mbn")),
+                ("modem", "image", PathBuf::from("/updates/modem.mdt")),
+                (
+                    "system",
+                    "etc/firmware/wlan/prima",
+                    PathBuf::from("/updates/wlan/prima/WCNSS_qcom_wlan_nv.bin"),
+                ),
+            ]
+        );
+    }
+
+    #[test]
     fn every_device_config_parses() {
         for contents in [
             include_str!("../configs/fairphone,fp4.toml"),
@@ -1429,6 +1535,7 @@ mod tests {
             include_str!("../configs/oneplus,enchilada.toml"),
             include_str!("../configs/oneplus,fajita.toml"),
             include_str!("../configs/pine64,pinenote.toml"),
+            include_str!("../configs/samsung,a5u-eur.toml"),
             include_str!("../configs/samsung,starqltechn.toml"),
             include_str!("../configs/shift,axolotl.toml"),
             include_str!("../configs/shift,otter.toml"),
@@ -1446,6 +1553,7 @@ mod tests {
             name: "adsp.mdt".to_string(),
             rename: None,
             required: true,
+            keep_extension: false,
         };
         let mut failures = Vec::new();
         let destination = firmware_destination(Path::new("/updates/qcom/device"), &file);
@@ -1475,11 +1583,13 @@ mod tests {
                     name: "optional.bin".to_string(),
                     rename: None,
                     required: false,
+                    keep_extension: false,
                 },
                 FwFile {
                     name: "required.bin".to_string(),
                     rename: None,
                     required: true,
+                    keep_extension: false,
                 },
             ],
         };
