@@ -1469,6 +1469,22 @@ mod tests {
         assert!(config.partdump.is_none());
         assert!(config.firmware.iter().all(|entry| entry.kernel.is_none()));
 
+        // The kernel-default names are squashed .mdt sources kept as .mdt,
+        // not plain copies of the split set.
+        let mut kept = config
+            .firmware
+            .iter()
+            .flat_map(|entry| entry.files.iter())
+            .filter(|file| file.keep_extension)
+            .map(|file| {
+                assert!(file.name.ends_with(".mdt"));
+                assert!(file.rename.is_none());
+                file.name.as_str()
+            })
+            .collect::<Vec<_>>();
+        kept.sort_unstable();
+        assert_eq!(kept, ["modem.mdt", "wcnss.mdt"]);
+
         let mut outputs = config
             .firmware
             .iter()

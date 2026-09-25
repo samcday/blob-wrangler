@@ -19,7 +19,9 @@ firmware = [
             { name = "mba.mbn" },
             { name = "modem.mdt", keep_extension = true },
         ] },
-    # Stock Android keeps the WCNSS NV table on the system partition. An
+    # Android keeps the WCNSS NV table on the system partition (LineageOS
+    # path; the stock location is still to be confirmed on a device). Without
+    # it wcnss_ctrl never creates the Wi-Fi and Bluetooth devices, so an
     # install that overwrites system has to provide wlan/prima another way.
     { partition = "system", origin = "etc/firmware/wlan/prima", destination = "wlan/prima", files = [
             { name = "WCNSS_qcom_wlan_nv.bin" },
