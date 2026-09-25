@@ -130,6 +130,11 @@ pub struct FwFile {
     rename: Option<String>,
     #[serde(default)]
     required: bool,
+    /// Squashed `.mdt` files are written as `.mbn` by default. Drivers fall
+    /// back to the `.mdt` name when the device tree has no `firmware-name`,
+    /// so this keeps the original extension (or the `rename` value verbatim).
+    #[serde(default)]
+    keep_extension: bool,
 }
 
 #[derive(Deserialize)]
@@ -734,7 +739,7 @@ fn firmware_destination(destpath: &Path, file: &FwFile) -> PathBuf {
     if let Some(new_name) = &file.rename {
         destination.set_file_name(new_name);
     }
-    if file.name.ends_with(".mdt") {
+    if file.name.ends_with(".mdt") && !file.keep_extension {
         destination.set_extension("mbn");
     }
     destination
@@ -1416,6 +1421,43 @@ mod tests {
     }
 
     #[test]
+    fn keep_extension_preserves_the_mdt_name_of_squashed_firmware() {
+        let root = Path::new("/updates");
+        let squashed = FwFile {
+            name: "wcnss.mdt".to_string(),
+            rename: None,
+            required: false,
+            keep_extension: true,
+        };
+        assert_eq!(
+            firmware_destination(root, &squashed),
+            PathBuf::from("/updates/wcnss.mdt")
+        );
+
+        let renamed = FwFile {
+            name: "wcnss.mdt".to_string(),
+            rename: Some("pronto.mdt".to_string()),
+            required: false,
+            keep_extension: true,
+        };
+        assert_eq!(
+            firmware_destination(root, &renamed),
+            PathBuf::from("/updates/pronto.mdt")
+        );
+
+        let default = FwFile {
+            name: "wcnss.mdt".to_string(),
+            rename: Some("pronto.mdt".to_string()),
+            required: false,
+            keep_extension: false,
+        };
+        assert_eq!(
+            firmware_destination(root, &default),
+            PathBuf::from("/updates/pronto.mbn")
+        );
+    }
+
+    #[test]
     fn every_device_config_parses() {
         for contents in [
             include_str!("../configs/fairphone,fp4.toml"),
@@ -1446,6 +1488,7 @@ mod tests {
             name: "adsp.mdt".to_string(),
             rename: None,
             required: true,
+            keep_extension: false,
         };
         let mut failures = Vec::new();
         let destination = firmware_destination(Path::new("/updates/qcom/device"), &file);
@@ -1475,11 +1518,13 @@ mod tests {
                     name: "optional.bin".to_string(),
                     rename: None,
                     required: false,
+                    keep_extension: false,
                 },
                 FwFile {
                     name: "required.bin".to_string(),
                     rename: None,
                     required: true,
+                    keep_extension: false,
                 },
             ],
         };
