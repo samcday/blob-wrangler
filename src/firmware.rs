@@ -1458,6 +1458,54 @@ mod tests {
     }
 
     #[test]
+    fn a5u_eur_config_matches_the_kernel_default_firmware_names() {
+        let config: ConfigFile =
+            toml::from_str(include_str!("../configs/samsung,a5u-eur.toml")).unwrap();
+        let config = config.wrangler;
+        let root = Path::new("/updates");
+
+        assert!(config.dynpart.is_none());
+        assert!(config.folders.is_none());
+        assert!(config.partdump.is_none());
+        assert!(config.firmware.iter().all(|entry| entry.kernel.is_none()));
+
+        let mut outputs = config
+            .firmware
+            .iter()
+            .flat_map(|entry| {
+                let destpath = root.join(&entry.destination);
+                entry.files.iter().map(move |file| {
+                    assert!(!file.required);
+                    (
+                        entry.partition.as_str(),
+                        entry.origin.as_str(),
+                        firmware_destination(&destpath, file),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        outputs.sort();
+        assert_eq!(
+            outputs,
+            [
+                (
+                    "apnhlos",
+                    "image",
+                    PathBuf::from("/updates/qcom/venus-1.8/venus.mbn"),
+                ),
+                ("apnhlos", "image", PathBuf::from("/updates/wcnss.mdt")),
+                ("modem", "image", PathBuf::from("/updates/mba.mbn")),
+                ("modem", "image", PathBuf::from("/updates/modem.mdt")),
+                (
+                    "system",
+                    "etc/firmware/wlan/prima",
+                    PathBuf::from("/updates/wlan/prima/WCNSS_qcom_wlan_nv.bin"),
+                ),
+            ]
+        );
+    }
+
+    #[test]
     fn every_device_config_parses() {
         for contents in [
             include_str!("../configs/fairphone,fp4.toml"),
@@ -1471,6 +1519,7 @@ mod tests {
             include_str!("../configs/oneplus,enchilada.toml"),
             include_str!("../configs/oneplus,fajita.toml"),
             include_str!("../configs/pine64,pinenote.toml"),
+            include_str!("../configs/samsung,a5u-eur.toml"),
             include_str!("../configs/samsung,starqltechn.toml"),
             include_str!("../configs/shift,axolotl.toml"),
             include_str!("../configs/shift,otter.toml"),
